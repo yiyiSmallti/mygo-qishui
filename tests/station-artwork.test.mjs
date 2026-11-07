@@ -84,6 +84,20 @@ test('artwork accepts no arbitrary filename, noncanonical scene number or radio 
   assert.equal(plugin.imageURL('data:image/png;base64,AAAA'), '');
 });
 
+// Transparent glyphs must use only bundled files and preserve safe URL
+// encoding; arbitrary and newly introduced scene IDs use the host fallback.
+test('mode glyphs resolve only packaged icons while legacy covers stay unchanged', () => {
+  const {plugin}=setup();
+  const icons=prefix.replace('/stations/','/mode-icons/');
+  assert.equal(plugin.stationArtwork('familiar',true),icons+'familiar.png');
+  assert.equal(plugin.stationArtwork('scene:40',true),icons+'scene-40.png');
+  assert.equal(plugin.stationArtwork('scene:40'),prefix+'scene-40.png');
+  for(const id of ['recommend','scene:999','scene:../40','scene:040','scene:40#x','radio:a']){
+    assert.equal(plugin.stationArtwork(id,true),'');
+  }
+  assert.equal(setup(undefined,{missingDir:true}).plugin.stationArtwork('fresh',true),'');
+});
+
 test('missing or nonlocal host directories do not generate file URLs', () => {
   assert.equal(setup(undefined, {noHost:true}).plugin.stationArtwork('recommend'), '');
   assert.equal(setup(undefined, {missingDir:true}).plugin.stationArtwork('recommend'), '');

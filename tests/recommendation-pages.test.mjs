@@ -233,6 +233,61 @@ test('separate scene and radio browse pages retain station identities',async()=>
   assert.equal(h.calls.length,2);
 });
 
+// The listening layout groups known modes without inventing unavailable
+// scenes or losing less common modes and their continuous playback IDs.
+test('listening navigation keeps every returned station reachable with usable artwork',async()=>{
+  const h=setup(call=>{
+    if(call.route==='/luna/pc/feed/mode')return{status_code:0,feed_mode_block:[{feed_mode:
+      [3,5,2,40,21,18,48,999].map(id=>({type:'scene_mode',text:'场景 '+id,entity:{feed_scene_mode:{scene_mode_id:id}}})),
+    }]};
+    if(call.route==='/luna/pc/discover')return{status_code:0,blocks:[{type:'discover_playlist_mix',inner_block:[{resources:[
+      {type:'radio',resource_id:'station-a',style:{title:'探索电台',desc:'电台简介',cover_url_list:['https://cdn.example/radio.jpg']}},
+    ]}]}]};
+    return defaultReply(call);
+  });
+  const manifest=JSON.parse(await readFile(new URL('../qishui-account/plugin.json',import.meta.url),'utf8'));
+  const entry=manifest.navigation.find(item=>item.page==='listening');
+  assert.ok(entry,'the sidebar must open the new browse page');
+  const view=plain(await h.plugin.browse({page:entry.page}));
+  const all=plain(await h.plugin.stations());
+  const shown=view.sections.flatMap(section=>section.stations);
+  assert.deepEqual(shown.map(station=>station.id).sort(),all.map(station=>station.id).sort());
+  assert.equal(new Set(shown.map(station=>station.id)).size,shown.length);
+  const common=view.sections[0];
+  assert.equal(common.layout,'mode-buttons');
+  assert.equal(common.stations.length,8);
+  const original=new Map(all.map(station=>[station.id,station]));
+  for(const station of common.stations){
+    assert.equal(station.imageUrl,original.get(station.id).imageUrl,'keep the opaque cover for older hosts');
+    const bytes=await readFile(new URL(station.iconUrl));
+    assert.ok(bytes.subarray(0,8).toString('hex')==='89504e470d0a1a0a'||
+      (bytes.subarray(0,4).toString()==='RIFF'&&bytes.subarray(8,12).toString()==='WEBP'));
+  }
+  const radio=view.sections.find(section=>section.layout==='mode-covers').stations[0];
+  assert.deepEqual(radio,original.get('radio:station-a'));
+  assert.equal(radio.description,'电台简介');
+  assert.equal(radio.imageUrl,'https://cdn.example/radio.jpg');
+  const future=shown.find(station=>station.id==='scene:999');
+  assert.equal(future.iconUrl,'');
+  assert.match(future.imageUrl,/scene-default\.png$/);
+  await h.plugin.stationNext({id:common.stations.find(station=>station.id==='scene:40').id});
+  await h.plugin.stationNext({id:radio.id});
+  assert.deepEqual(h.calls.find(call=>call.route==='/luna/pc/feed/song-tab').body.feed_preference,{scene_mode_id:40});
+  assert.equal(h.calls.find(call=>call.route==='/luna/pc/feed/radio/tracks').body.radio_id,'station-a');
+});
+
+// Server-side mode removal must not leave buttons that request missing IDs.
+test('listening page omits absent common modes without duplicating or hiding the remaining catalog',async()=>{
+  const h=setup();
+  const view=plain(await h.plugin.browse({page:'listening'}));
+  const available=plain(await h.plugin.stations()).map(station=>station.id).sort();
+  const shown=view.sections.flatMap(section=>section.stations).map(station=>station.id);
+  assert.deepEqual([...shown].sort(),available);
+  assert.equal(new Set(shown).size,shown.length);
+  assert.ok(!shown.includes('scene:40'));
+  assert.equal(h.calls.filter(call=>call.route==='/luna/pc/feed/mode').length,1);
+});
+
 // The heart must use authenticated musicApi JSON calls and preserve UGC identity.
 test('assembled like/isLiked exports use official read and write routes only when called',async()=>{
   const states=new Map([['track:1',false],['ugc_clip:2',true]]);

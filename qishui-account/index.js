@@ -4,7 +4,7 @@ const ORIGIN = 'https://api.qishui.com';
 const SESSION = 'qishui-session-v1';
 const DIAGNOSTIC = 'qishui-login-diagnostic-v1';
 const DEVICE = 'qishui-device-v1';
-const VERSION = '0.4.2';
+const VERSION = '0.5.0';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 let generation = 0;
 let signingIn = false;
@@ -411,7 +411,7 @@ const STATION_ARTWORK_SCENES = new Set([
   31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 44, 45, 47, 48,
 ]);
 
-function stationArtwork(id) {
+function stationArtwork(id, glyph = false) {
   if (typeof id !== 'string') return '';
   let name;
   if (id === 'recommend' || id === 'familiar' || id === 'fresh') {
@@ -421,6 +421,10 @@ function stationArtwork(id) {
     if (!match || !Number.isSafeInteger(Number(match[1]))) return '';
     name = STATION_ARTWORK_SCENES.has(Number(match[1])) ? 'scene-' + match[1] : 'scene-default';
   }
+  // Glyphs are supplied only to mode-buttons; the host tints their alpha
+  // to match its theme. The regular station catalog retains opaque covers.
+  if (glyph && (name === 'recommend' || name === 'scene-default')) return '';
+  const filename = name + '.png';
   if (typeof host === 'undefined' || !host || typeof host.dir !== 'string' || /[\u0000-\u001f\u007f]/.test(host.dir)) return '';
   const directory = host.dir.replace(/\\/g, '/');
   let prefix, parts;
@@ -437,7 +441,7 @@ function stationArtwork(id) {
   if (parts.some(part => !part || part === '.' || part === '..')) return '';
   // Encode each filesystem segment, including literal % and #. Keeping the
   // drive outside this encoding produces file:///C:/, not a file://C: host.
-  return prefix + '/' + parts.concat('assets', 'stations', name + '.png').map(encodeURIComponent).join('/');
+  return prefix + '/' + parts.concat('assets', glyph ? 'mode-icons' : 'stations', filename).map(encodeURIComponent).join('/');
 }
 
 function mapArtist(record) {
@@ -893,6 +897,24 @@ export async function home() {
 }
 
 export async function browse({ page } = {}) {
+  if (page === 'listening') {
+    const context = musicContext(), catalog = await recommendationService.catalog();
+    musicCurrent(context);
+    const allModes = [...catalog.primary, ...catalog.scenes];
+    const byId = new Map(allModes.map(station => [station.id, station]));
+    const commonIds = ['familiar', 'fresh', 'scene:3', 'scene:5', 'scene:2', 'scene:40', 'scene:21', 'scene:18'];
+    const common = commonIds.map(id => byId.get(id)).filter(Boolean);
+    const commonSet = new Set(common.map(station => station.id));
+    const modeButton = station => ({ ...station, iconUrl: stationArtwork(station.id, true) });
+    const sections = [];
+    if (common.length) sections.push({ title: '常用模式', layout: 'mode-buttons', stations: common.map(modeButton) });
+    if (catalog.radios.length) sections.push({ title: '探索更多新模式', layout: 'mode-covers', stations: catalog.radios });
+    // Do not discard less common or newly returned modes when arranging
+    // the reference layout; they keep their original playback identity.
+    const remaining = allModes.filter(station => !commonSet.has(station.id));
+    if (remaining.length) sections.push({ title: '更多听歌模式', layout: 'mode-buttons', stations: remaining.map(modeButton) });
+    return { title: '听歌模式', sections };
+  }
   if (page === 'recommend' || /^recommend\/refresh\/\d{1,16}$/.test(page || '')) {
     const context = musicContext();
     const sections = await recommendationSections({ refresh: page !== 'recommend' });
