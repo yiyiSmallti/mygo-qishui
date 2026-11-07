@@ -1,0 +1,33 @@
+# Account data and private local files
+.env
+.env.*
+!.env.example
+local.config.*
+storage.json
+cookies*.json
+credentials*.json
+plugin-data/
+media-cache/
+artifacts/
+*login*.png
+
+# Generated outputs, downloads, tools and personal backups
+.verification/
+node_modules/
+dist/
+build/
+build-*/
+toolchains/
+backup*/
+*-backup-*/
+*.zip
+*.exe
+*.dll
+*.node
+*.flac
+*.mp3
+*.m4a
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
