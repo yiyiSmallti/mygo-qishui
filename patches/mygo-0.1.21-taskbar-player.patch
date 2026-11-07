@@ -8,7 +8,7 @@
 +
 +For listening-mode pages, `layout: "mode-buttons"` displays stations as compact icon-and-title buttons, and `layout: "mode-covers"` uses landscape cover cards with the title and description over a lower scrim. A station's optional `iconUrl` supplies a transparent monochrome glyph that the button tints for the current theme; `imageUrl` remains its normal cover for older hosts and other layouts. Both layouts start the same continuous station queue and support keyboard activation.
 +
-+The Windows taskbar player in this custom build shows a larger lyric line with progress based on source-provided word timestamps; line-only lyrics stay line-based. Drag its cover or lyric area to choose a safe left or right taskbar slot. The position is saved. The small close button hides the strip without stopping music; Settings can show it again. The panel adapts to available space and never needs Explorer injection. Automatic application updates remain enabled and may replace this custom build.
++The Windows taskbar player in this custom build shows a larger lyric line with progress based on source-provided word timestamps; line-only lyrics stay line-based. Hold and drag its cover or lyric area: the strip follows the pointer horizontally, then snaps to a safe left or right slot when released. The position is saved without visiting Settings. The small close button appears only when hovering its top-right corner or focusing it with the keyboard; it hides the strip without stopping music, and Settings can show it again. The panel adapts to available space and never needs Explorer injection. Automatic application updates remain enabled and may replace this custom build.
 +
  An `imageUrl` can say where its size goes, with `{size}`, for an image server that makes pictures the size asked: `https://img.example.com/cover.jpg?param={size}y{size}` or `https://img.example.com/{size}/cover.jpg`. The app fills in how many pixels across it shows the picture at, 40 in a row and 600 in Now Playing, or 600 where nothing asks for a size. `%7Bsize%7D`, as JavaScript's `URL` writes it in a query, counts too. An app older than 0.1.20 fetches `{size}` as it is, so a plugin that gives it wants a `minAppVersion` of 0.1.20. Without it, give pictures at about 800 pixels if the service can, rather than as large as they were made: the app fetches and decodes the whole of each, a few megabytes for one thousands of pixels across, to show it in a row.
  
@@ -531,7 +531,7 @@
  func settingsPath() (string, error) {
 --- /dev/null
 +++ b/internal/app/taskbar.go
-@@ -0,0 +1,81 @@
+@@ -0,0 +1,91 @@
 +package app
 +
 +// The taskbar player is a separate, non-activating window in unused taskbar
@@ -554,6 +554,16 @@
 +	if panel, ok := a.taskbar.(taskbarDragControls); ok {
 +		panel.beginDrag()
 +	}
++}
++
++// Preserve the accumulated DIP move if the first delivered event is already
++// outside this small window, so dragging anchors at the original press.
++func (a *app) beginTaskbarDragFrom(deltaX float32) {
++	if panel, ok := a.taskbar.(interface{ beginDragFrom(float32) }); ok {
++		panel.beginDragFrom(deltaX)
++		return
++	}
++	a.beginTaskbarDrag()
 +}
 +
 +func (a *app) updateTaskbarDrag() {
@@ -615,7 +625,7 @@
 +}
 --- /dev/null
 +++ b/internal/app/taskbar_geometry.go
-@@ -0,0 +1,108 @@
+@@ -0,0 +1,124 @@
 +package app
 +
 +import (
@@ -723,6 +733,22 @@
 +		return "right"
 +	}
 +	return "left"
++}
++
++// Keep the held panel's size and horizontal grab point under the cursor.
++// Release snaps to a safe slot; this preview cannot escape the taskbar.
++func taskbarDragPlacement(bar, start taskbarRect, grabX, cursorX int32) (taskbarRect, bool) {
++	if !bar.valid() || !start.valid() || start.width() > bar.width() || start.height() > bar.height() {
++		return taskbarRect{}, false
++	}
++	x := max(bar.Left, min(cursorX-grabX, bar.Right-start.width()))
++	y := max(bar.Top, min(start.Top, bar.Bottom-start.height()))
++	return taskbarRect{x, y, x + start.width(), y + start.height()}, true
++}
++
++func taskbarDragGrabOffset(start taskbarRect, cursorX int32, movedDIP float32, dpi uint32) int32 {
++	grab := cursorX - start.Left - int32(math.Round(float64(movedDIP)*float64(dpi)/96))
++	return max(0, min(grab, start.width()))
 +}
 --- /dev/null
 +++ b/internal/app/taskbar_lyric.go
@@ -1168,7 +1194,7 @@
 +}
 --- /dev/null
 +++ b/internal/app/taskbar_test.go
-@@ -0,0 +1,183 @@
+@@ -0,0 +1,225 @@
 +package app
 +
 +import (
@@ -1299,6 +1325,48 @@
 +	}
 +}
 +
++// A real mouse move must move the strip before reaching the screen midpoint.
++func TestTaskbarDragFollowsPointerAndOnlySnapsOnRelease(t *testing.T) {
++	bar := taskbarRect{0, 1528, 2560, 1600}
++	start := taskbarRect{18, 1534, 600, 1594}
++	grab := int32(120)
++	for _, tc := range []struct{ cursor, wantLeft int32 }{
++		{138, 18}, {198, 78}, {938, 818}, {1738, 1618}, {4000, 1978}, {-1000, 0},
++	} {
++		r, ok := taskbarDragPlacement(bar, start, grab, tc.cursor)
++		if !ok || r.Left != tc.wantLeft || r.width() != start.width() || r.Top != start.Top || r.height() != start.height() {
++			t.Fatalf("cursor %d: got %v %v; wanted fixed-size strip at %d", tc.cursor, r, ok, tc.wantLeft)
++		}
++	}
++	// Released on the right, a narrower safe gap takes over without covering
++	// its application buttons or the system tray.
++	occupied := []taskbarRect{{900, 1528, 1700, 1600}, {2070, 1528, 2560, 1600}}
++	docked, ok := taskbarPlacementForSide(bar, occupied, 144, taskbarSideAtCursor(bar, 1800))
++	if !ok || docked.Left < 1700 || docked.Right >= 2070 || docked.width() != 300 {
++		t.Fatalf("release did not use the smaller right-side safe slot: %v %v", docked, ok)
++	}
++}
++
++// Fast moves crossing the whole panel in one frame retain the press anchor at 150% DPI.
++func TestTaskbarDragRecoversFastFirstMoveAndNegativeOrigin(t *testing.T) {
++	bar := taskbarRect{-2560, 1528, 0, 1600}
++	start := taskbarRect{-2542, 1534, -1960, 1594}
++	// Mouse went down 120 px into the panel, then moved 1000 physical px
++	// before the first UI build (666.67 DIP at 150%).
++	current := int32(-1422)
++	grab := taskbarDragGrabOffset(start, current, 1000*96.0/144, 144)
++	if grab != 120 {
++		t.Fatalf("first move lost the original grab point: %d", grab)
++	}
++	moved, ok := taskbarDragPlacement(bar, start, grab, current)
++	if !ok || moved.Left != -1542 || moved.width() != 582 {
++		t.Fatalf("fast mouse move did not follow the cursor: %v %v", moved, ok)
++	}
++	if _, ok := taskbarDragPlacement(taskbarRect{}, start, grab, current); ok {
++		t.Fatal("a vanished taskbar must cancel the preview")
++	}
++}
++
 +type testTaskbarController struct {
 +	syncs, closes, begins, updates, ends, cancels int
 +}
@@ -1354,7 +1422,7 @@
 +}
 --- /dev/null
 +++ b/internal/app/taskbar_widget_view_windows.go
-@@ -0,0 +1,224 @@
+@@ -0,0 +1,229 @@
 +package app
 +
 +import (
@@ -1414,7 +1482,7 @@
 +	row.Children(func() {
 +		info := ui.ButtonBase(c.Key("track")).Grow(1).Shrink(1).MinWidth(artSize).
 +			Height(h - 4).Gap(7).AlignItems(ui.Center).FocusRing(false).
-+			Label(T("Open Now Playing")).Tooltip(T("Drag to move the taskbar player"))
++			Label(T("Open Now Playing")).Tooltip(T("Drag to move the taskbar player")).Cursor(ui.CursorGrab)
 +		info.Children(func() {
 +			if tr != nil {
 +				a.cover(c.Key("cover"), tr.Album.ImageURL, 96, artSize, 6).Shrink(0)
@@ -1452,6 +1520,9 @@
 +			})
 +		})
 +		wasDragging := a.taskbarWidgetDrag(info)
++		if a.taskbarGesture.active {
++			info.Cursor(ui.CursorGrabbing)
++		}
 +		if info.Clicked() && !wasDragging {
 +			if tr != nil {
 +				a.nowPlaying = true
@@ -1484,10 +1555,12 @@
 +	})
 +	close := ui.ButtonBase(c.Key("close-taskbar")).Absolute().Right(0).Top(0).Size(16, 16).
 +		Radius(8).Center().Label(T("Close taskbar player")).Tooltip(T("Close taskbar player"))
-+	if close.Hovered() {
++	// Keep the small hit area available, but reveal its glyph only when
++	// pointing at this corner (or reaching it with the keyboard).
++	if close.Hovered() || close.FocusVisible() {
 +		close.Background(p.text.Alpha(0.13))
++		close.Children(func() { ui.Icon(c, iconX).Size(9, 9).TextColor(p.muted) })
 +	}
-+	close.Children(func() { ui.Icon(c, iconX).Size(9, 9).TextColor(p.muted) })
 +	if close.Clicked() {
 +		a.dismissTaskbarWidget()
 +	}
@@ -1508,7 +1581,7 @@
 +		g.x, g.y = g.x+dx, g.y+dy
 +		if !g.active && g.x*g.x+g.y*g.y >= 16 {
 +			g.active = true
-+			a.beginTaskbarDrag()
++			a.beginTaskbarDragFrom(g.x)
 +		}
 +		if g.active {
 +			a.updateTaskbarDrag()
@@ -1581,7 +1654,7 @@
 +}
 --- /dev/null
 +++ b/internal/app/taskbar_widget_view_windows_test.go
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,283 @@
 +package app
 +
 +import (
@@ -1697,6 +1770,54 @@
 +	}
 +	if a.settings.TaskbarPlayer || !a.pl.Playing() || a.pl.Current().ID != "1" || probe.closed != 0 || probe.synced == 0 {
 +		t.Fatalf("close changed playback or did not hide panel: settings=%v playing=%v probe=%+v", a.settings.TaskbarPlayer, a.pl.Playing(), probe)
++	}
++}
++
++// The close glyph used to stay visible; only entering its own corner
++// should reveal it, and leaving the corner must clear it again.
++func TestTaskbarWidgetCloseRevealsOnlyAtCorner(t *testing.T) {
++	a := newTestApp()
++	a.settings.TaskbarPlayer = true
++	tt := ui.NewTester(a.taskbarWidgetView, 388, 40)
++	tt.Frame()
++	r, ok := tt.Find("Close taskbar player")
++	if !ok {
++		t.Fatal("missing close hit area")
++	}
++	coverage := func() uint64 {
++		im := tt.Image()
++		var alpha uint64
++		for y := int(r.Y); y < int(r.Y+r.H); y++ {
++			for x := int(r.X); x < int(r.X+r.W); x++ {
++				_, _, _, a := im.At(x, y).RGBA()
++				alpha += uint64(a)
++			}
++		}
++		return alpha
++	}
++	idle := coverage()
++	if idle != 0 {
++		t.Fatal("close corner is painted without pointer or keyboard focus")
++	}
++	tt.Move(r.X+r.W/2, r.Y+r.H/2)
++	tt.Frame()
++	if coverage() <= idle {
++		t.Fatal("entering the close corner did not reveal the control")
++	}
++	info, _ := tt.Find("Open Now Playing")
++	tt.Move(info.X+10, info.Y+info.H/2)
++	tt.Frame()
++	if coverage() != idle {
++		t.Fatal("close control remained visible away from its corner")
++	}
++	if tt.Cursor() != ui.CursorGrab {
++		t.Fatal("track area does not indicate that it can be dragged")
++	}
++	tt.Move(r.X+r.W/2, r.Y+r.H/2)
++	tt.Frame()
++	tt.ClickAt(r.X+r.W/2, r.Y+r.H/2)
++	if a.settings.TaskbarPlayer {
++		t.Fatal("revealed close control did not hide the taskbar player")
 +	}
 +}
 +
@@ -1819,7 +1940,7 @@
 +}
 --- /dev/null
 +++ b/internal/app/taskbar_windows.go
-@@ -0,0 +1,262 @@
+@@ -0,0 +1,373 @@
 +//go:build windows
 +
 +package app
@@ -1839,6 +1960,9 @@
 +	taskbarUser32            = windows.NewLazySystemDLL("user32.dll")
 +	taskbarGetRect           = taskbarUser32.NewProc("GetWindowRect")
 +	taskbarGetCursor         = taskbarUser32.NewProc("GetCursorPos")
++	taskbarGetAsyncKey       = taskbarUser32.NewProc("GetAsyncKeyState")
++	taskbarGetCapture        = taskbarUser32.NewProc("GetCapture")
++	taskbarReleaseCapture    = taskbarUser32.NewProc("ReleaseCapture")
 +	taskbarGetClass          = taskbarUser32.NewProc("GetClassNameW")
 +	taskbarVisible           = taskbarUser32.NewProc("IsWindowVisible")
 +	taskbarEnumWindows       = taskbarUser32.NewProc("EnumWindows")
@@ -1858,16 +1982,19 @@
 +)
 +
 +type windowsTaskbar struct {
-+	a        *app
-+	win      *mygo.Window
-+	hwnd     uintptr
-+	stop     chan struct{}
-+	wake     chan struct{}
-+	enabled  atomic.Bool
-+	closed   bool              // UI thread only
-+	slots    taskbarPlacements // UI thread only; measured on the worker
-+	dragging bool
-+	dragSide string
++	a         *app
++	win       *mygo.Window
++	hwnd      uintptr
++	stop      chan struct{}
++	wake      chan struct{}
++	enabled   atomic.Bool
++	closed    bool              // UI thread only
++	slots     taskbarPlacements // UI thread only; measured on the worker
++	dragging  bool
++	dragSide  string
++	dragStart taskbarRect
++	dragGrabX int32
++	dragPoll  chan struct{} // UI-thread owner; closed for release/cancel/disable
 +}
 +
 +func (a *app) installTaskbar() {
@@ -1913,7 +2040,9 @@
 +	on := w.a.settings.TaskbarPlayer && !w.a.quitting
 +	changed := w.enabled.Swap(on) != on
 +	if !on {
++		w.stopDragPolling()
 +		w.dragging = false
++		w.releaseDragCapture()
 +		w.win.Hide()
 +	} else {
 +		if !w.dragging {
@@ -1935,6 +2064,9 @@
 +		return
 +	}
 +	w.closed = true
++	w.stopDragPolling()
++	w.dragging = false
++	w.releaseDragCapture()
 +	w.enabled.Store(false)
 +	close(w.stop)
 +	w.win.Destroy()
@@ -1971,20 +2103,104 @@
 +		return
 +	}
 +	w.slots = slots
-+	side := w.a.settings.TaskbarSide
 +	if w.dragging {
-+		side = w.dragSide
++		w.updateDrag()
++		return
 +	}
-+	r, ok := slots.forSide(side)
++	r, ok := slots.forSide(w.a.settings.TaskbarSide)
 +	w.apply(r, ok)
 +}
 +
 +func (w *windowsTaskbar) beginDrag() {
++	w.beginDragFrom(0)
++}
++
++func (w *windowsTaskbar) beginDragFrom(deltaX float32) {
 +	if w.closed || !w.enabled.Load() || !w.slots.bar.valid() {
 +		return
 +	}
++	var point struct{ X, Y int32 }
++	if ok, _, _ := taskbarGetCursor.Call(uintptr(unsafe.Pointer(&point))); ok == 0 {
++		return
++	}
++	start, ok := taskbarWindowRect(w.hwnd)
++	if !ok {
++		return
++	}
++	dpi, _, _ := taskbarGetDPI.Call(w.hwnd)
++	if dpi == 0 {
++		return
++	}
++	w.stopDragPolling()
++	w.dragStart = start
++	w.dragGrabX = taskbarDragGrabOffset(start, point.X, deltaX, uint32(dpi))
 +	w.dragging = true
 +	w.dragSide = normalizedTaskbarSide(w.a.settings.TaskbarSide)
++	w.updateDrag()
++	if !w.dragging {
++		return
++	}
++	// A NOACTIVATE panel cannot rely on SetCapture for moves and releases
++	// outside its HWND. Poll only while this one real drag is in progress,
++	// without a global hook or a continuing animation while paused.
++	done := make(chan struct{})
++	w.dragPoll = done
++	go func() {
++		ticker := time.NewTicker(16 * time.Millisecond)
++		defer ticker.Stop()
++		for {
++			select {
++			case <-done:
++				return
++			case <-w.stop:
++				return
++			case <-ticker.C:
++				mygo.RunOnMain(func() {
++					if w.dragPoll == done {
++						w.pollDrag()
++					}
++				})
++			}
++		}
++	}()
++}
++
++func (w *windowsTaskbar) stopDragPolling() {
++	if w.dragPoll != nil {
++		close(w.dragPoll)
++		w.dragPoll = nil
++	}
++}
++
++func (w *windowsTaskbar) releaseDragCapture() {
++	capture, _, _ := taskbarGetCapture.Call()
++	if capture == 0 {
++		return
++	}
++	root, _, _ := taskbarAncestor.Call(capture, 2) // GA_ROOT
++	if capture == w.hwnd || root == w.hwnd {
++		// Give MyGo its normal capture-canceled message if the real mouse
++		// release happened outside this nonactive window. Never release a
++		// different app's capture, and never synthesize mouse input.
++		taskbarReleaseCapture.Call()
++	}
++}
++
++func (w *windowsTaskbar) pollDrag() {
++	if w.closed || !w.dragging || !w.enabled.Load() {
++		w.stopDragPolling()
++		return
++	}
++	escape, _, _ := taskbarGetAsyncKey.Call(0x1b)
++	if escape&0x8000 != 0 {
++		w.cancelDrag()
++		return
++	}
++	down, _, _ := taskbarGetAsyncKey.Call(0x01) // VK_LBUTTON
++	if down&0x8000 == 0 {
++		w.endDrag()
++		return
++	}
 +	w.updateDrag()
 +}
 +
@@ -1997,7 +2213,15 @@
 +		return
 +	}
 +	w.dragSide = taskbarSideAtCursor(w.slots.bar, point.X)
-+	r, ok := w.slots.forSide(w.dragSide)
++	r, ok := taskbarDragPlacement(w.slots.bar, w.dragStart, w.dragGrabX, point.X)
++	if !ok {
++		w.cancelDrag()
++		return
++	}
++	// A held but stationary mouse needs no placement or rendering work.
++	if current, valid := taskbarWindowRect(w.hwnd); valid && current == r {
++		return
++	}
 +	w.apply(r, ok)
 +}
 +
@@ -2006,19 +2230,27 @@
 +		return
 +	}
 +	w.updateDrag()
++	if !w.dragging {
++		return
++	}
++	w.stopDragPolling()
 +	w.dragging = false
 +	w.a.setTaskbarSide(w.dragSide)
 +	r, ok := w.slots.forSide(w.a.settings.TaskbarSide)
 +	w.apply(r, ok)
++	w.releaseDragCapture()
 +}
 +
 +func (w *windowsTaskbar) cancelDrag() {
 +	if !w.dragging {
++		w.stopDragPolling()
 +		return
 +	}
++	w.stopDragPolling()
 +	w.dragging = false
 +	r, ok := w.slots.forSide(w.a.settings.TaskbarSide)
 +	w.apply(r, ok)
++	w.releaseDragCapture()
 +}
 +
 +func (w *windowsTaskbar) apply(r taskbarRect, ok bool) {
