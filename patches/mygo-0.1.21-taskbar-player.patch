@@ -1,6 +1,6 @@
 --- a/README.md
 +++ b/README.md
-@@ -111,6 +111,12 @@
+@@ -111,6 +111,14 @@
  
  The shapes are in [`internal/music/music.go`](internal/music/music.go) by their JSON names. Times are in milliseconds. A `Browse` is `{title, subtitle, imageUrl, description, sections}`: with an `imageUrl`, such as a listener's avatar, it's headed round, as an artist's page is, and `description` goes under the title a line to each line. A section can hold `tracks`, `albums`, `artists`, `playlists`, `shows`, `stations`, `links` (`{title, subtitle, imageUrl, page}`), a `morePage`, and `empty`, what it says while it holds nothing. A source's first section of `tracks` leads its Home as a card of the day's songs, which opens a page of all of them, headed by the section's `pageTitle` if it has one, else its `title`, and its `subtitle` after the count of songs. A show's `publisherPage` is a `browse` page of who publishes it, which their name on the show's page opens.
  
@@ -8,7 +8,9 @@
 +
 +For listening-mode pages, `layout: "mode-buttons"` displays stations as compact icon-and-title buttons, and `layout: "mode-covers"` uses landscape cover cards with the title and description over a lower scrim. A station's optional `iconUrl` supplies a transparent monochrome glyph that the button tints for the current theme; `imageUrl` remains its normal cover for older hosts and other layouts. Both layouts start the same continuous station queue and support keyboard activation.
 +
-+The Windows taskbar player in this custom build shows a larger lyric line with progress based on source-provided word timestamps; line-only lyrics stay line-based. Hold and drag its cover or lyric area: the strip follows the pointer horizontally, then snaps to a safe left or right slot when released. The position is saved without visiting Settings. The small close button appears only when hovering its top-right corner or focusing it with the keyboard; it hides the strip without stopping music, and Settings can show it again. The panel adapts to available space and never needs Explorer injection. Automatic application updates remain enabled and may replace this custom build.
++The Windows taskbar player in this custom build shows a larger lyric line with progress based on source-provided word timestamps; line-only lyrics stay line-based. Hold and drag its cover or lyric area: the strip follows the pointer horizontally, then snaps to a safe left or right slot when released. The position is saved without visiting Settings. The small close button appears when the pointer is over any part of the strip and hides when the pointer leaves; keyboard focus also keeps it visible. It hides the strip without stopping music, and Settings can show it again. The panel adapts to available space and never needs Explorer injection. Automatic application updates remain enabled and may replace this custom build.
++
++During dragging, a translucent rounded outline previews the exact destination slot and follows the selected side. The outline is click-through, takes no focus, and is hidden on release, cancellation, or disabling the taskbar player.
 +
  An `imageUrl` can say where its size goes, with `{size}`, for an image server that makes pictures the size asked: `https://img.example.com/cover.jpg?param={size}y{size}` or `https://img.example.com/{size}/cover.jpg`. The app fills in how many pixels across it shows the picture at, 40 in a row and 600 in Now Playing, or 600 where nothing asks for a size. `%7Bsize%7D`, as JavaScript's `URL` writes it in a query, counts too. An app older than 0.1.20 fetches `{size}` as it is, so a plugin that gives it wants a `minAppVersion` of 0.1.20. Without it, give pictures at about 800 pixels if the service can, rather than as large as they were made: the app fetches and decodes the whole of each, a few megabytes for one thousands of pixels across, to show it in a row.
  
@@ -625,7 +627,7 @@
 +}
 --- /dev/null
 +++ b/internal/app/taskbar_geometry.go
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,137 @@
 +package app
 +
 +import (
@@ -724,6 +726,19 @@
 +		return p.right, p.rightOK
 +	}
 +	return p.left, p.leftOK
++}
++
++// The frame previews the actual safe landing slot, not the moving strip's
++// current rectangle. Without an active drag or a measured slot it vanishes.
++func taskbarSnapPreviewPlacement(p taskbarPlacements, side string, dragging bool) (taskbarRect, bool) {
++	if !dragging || !p.bar.valid() {
++		return taskbarRect{}, false
++	}
++	r, ok := p.forSide(side)
++	if !ok || !r.valid() || r.Left < p.bar.Left || r.Right > p.bar.Right || r.Top < p.bar.Top || r.Bottom > p.bar.Bottom {
++		return taskbarRect{}, false
++	}
++	return r, true
 +}
 +
 +// taskbarSideAtCursor maps a real drag's screen coordinate to a docking side.
@@ -920,7 +935,7 @@
 +func (a *app) installTaskbar() {}
 --- /dev/null
 +++ b/internal/app/taskbar_probe_windows.go
-@@ -0,0 +1,271 @@
+@@ -0,0 +1,285 @@
 +//go:build windows
 +
 +package app
@@ -1121,7 +1136,7 @@
 +	return p.placements(own).forSide("left")
 +}
 +
-+func (p *taskbarProbe) placements(own uintptr) taskbarPlacements {
++func (p *taskbarProbe) placements(own uintptr, ignored ...uintptr) taskbarPlacements {
 +	windows := taskbarSnapshotWindows()
 +	foreground, _, _ := taskbarForeground.Call()
 +	foregroundRoot, _, _ := taskbarAncestor.Call(foreground, 3)
@@ -1145,7 +1160,7 @@
 +				continue
 +			}
 +			for otherIndex, other := range windows {
-+				if other.hwnd == own || other.hwnd == bar.hwnd {
++				if taskbarProbeIgnoresWindow(other.hwnd, own, bar.hwnd, ignored) {
 +					continue
 +				}
 +				switch other.class {
@@ -1165,6 +1180,20 @@
 +		}
 +	}
 +	return taskbarPlacements{}
++}
++
++// Only explicitly owned panels are ignored; other players and overlays keep
++// reserving space. The snap preview's immutable handle is supplied by watch.
++func taskbarProbeIgnoresWindow(hwnd, own, bar uintptr, ignored []uintptr) bool {
++	if hwnd == own || hwnd == bar {
++		return true
++	}
++	for _, ignore := range ignored {
++		if ignore != 0 && hwnd == ignore {
++			return true
++		}
++	}
++	return false
 +}
 +
 +// Large non-activating overlays (GPU telemetry, input surfaces, etc.) may have
@@ -1193,8 +1222,60 @@
 +	return exStyle&(0x08000000|0x20) == 0 // NOACTIVATE / TRANSPARENT large overlays
 +}
 --- /dev/null
++++ b/internal/app/taskbar_snap_preview_windows.go
+@@ -0,0 +1,24 @@
++package app
++
++import "github.com/egoist/mygo/ui"
++
++// The native drag controller positions this click-through outline at the
++// exact safe slot that will receive the player when the pointer lets go.
++func (a *app) taskbarSnapPreviewView(c *ui.Context) {
++	theme := *c.Theme()
++	if a.tray != nil {
++		if a.tray.Dark() {
++			theme = *ui.DarkTheme()
++		} else {
++			theme = *ui.LightTheme()
++		}
++	}
++	p := paletteFor(&theme)
++	theme.Background = ui.Transparent
++	c.SetTheme(&theme)
++	c.Root().Background(ui.Transparent)
++	// Leave a small outer inset so the rounded stroke is never clipped at
++	// the native window edge. No controls, text or timers obstruct dragging.
++	ui.Box(c.Key("snap-outline")).Fill().Margin(1).Radius(8).PassThrough().
++		Background(p.accent.Alpha(0.13)).Border(2, p.accent.Alpha(0.95))
++}
+--- /dev/null
++++ b/internal/app/taskbar_snap_preview_windows_test.go
+@@ -0,0 +1,22 @@
++package app
++
++import (
++	"fmt"
++	"testing"
++
++	"github.com/egoist/mygo/ui"
++)
++
++// MM_FRAMES shows the snap target at the full and smallest taskbar slots.
++func TestTaskbarSnapPreviewFrames(t *testing.T) {
++	dir := framesDir(t)
++	for _, dark := range []bool{false, true} {
++		for _, width := range []int{388, 108} {
++			a := newTestApp()
++			tt := ui.NewTester(a.taskbarSnapPreviewView, width, 40)
++			tt.SetDark(dark)
++			settled(tt)
++			saveFrame(t, dir, fmt.Sprintf("taskbar-snap-%d-dark-%v.png", width, dark), tt.Image())
++		}
++	}
++}
+--- /dev/null
 +++ b/internal/app/taskbar_test.go
-@@ -0,0 +1,225 @@
+@@ -0,0 +1,260 @@
 +package app
 +
 +import (
@@ -1367,6 +1448,41 @@
 +	}
 +}
 +
++// The snap frame follows the safe destination, including its smaller right-side size, and disappears without a drag.
++func TestTaskbarSnapPreviewTracksLandingSlotAndLifecycle(t *testing.T) {
++	p := taskbarPlacements{
++		bar:  taskbarRect{0, 1528, 2560, 1600},
++		left: taskbarRect{18, 1534, 600, 1594}, leftOK: true,
++		right: taskbarRect{1761, 1534, 2061, 1594}, rightOK: true,
++	}
++	for _, side := range []string{"left", "right"} {
++		r, ok := taskbarSnapPreviewPlacement(p, side, true)
++		want, _ := p.forSide(side)
++		if !ok || r != want {
++			t.Fatalf("%s preview did not match actual landing bounds: %v %v", side, r, ok)
++		}
++		if _, ok := taskbarSnapPreviewPlacement(p, side, false); ok {
++			t.Fatalf("%s preview survived release, cancellation or disabling", side)
++		}
++	}
++	// App icons changed while dragging: the live frame must shrink with the slot.
++	p.right.Left = p.right.Right - 162
++	if r, ok := taskbarSnapPreviewPlacement(p, "right", true); !ok || r.width() != 162 {
++		t.Fatalf("preview retained a stale size after taskbar occupancy changed: %v %v", r, ok)
++	}
++	p.rightOK = false
++	if _, ok := taskbarSnapPreviewPlacement(p, "right", true); ok {
++		t.Fatal("an unavailable destination must not keep a snap frame")
++	}
++	p.rightOK, p.right.Right = true, 2600
++	if _, ok := taskbarSnapPreviewPlacement(p, "right", true); ok {
++		t.Fatal("preview escaped the measured taskbar bounds")
++	}
++	if _, ok := taskbarSnapPreviewPlacement(taskbarPlacements{}, "left", true); ok {
++		t.Fatal("preview survived disappearance of the taskbar")
++	}
++}
++
 +type testTaskbarController struct {
 +	syncs, closes, begins, updates, ends, cancels int
 +}
@@ -1422,7 +1538,7 @@
 +}
 --- /dev/null
 +++ b/internal/app/taskbar_widget_view_windows.go
-@@ -0,0 +1,229 @@
+@@ -0,0 +1,230 @@
 +package app
 +
 +import (
@@ -1555,9 +1671,10 @@
 +	})
 +	close := ui.ButtonBase(c.Key("close-taskbar")).Absolute().Right(0).Top(0).Size(16, 16).
 +		Radius(8).Center().Label(T("Close taskbar player")).Tooltip(T("Close taskbar player"))
-+	// Keep the small hit area available, but reveal its glyph only when
-+	// pointing at this corner (or reaching it with the keyboard).
-+	if close.Hovered() || close.FocusVisible() {
++	// Watch the whole native surface, including interactive children and
++	// transparent padding. Only the original corner remains a close target.
++	_, _, pointerOver := c.Root().PointerPosition()
++	if pointerOver || close.FocusVisible() {
 +		close.Background(p.text.Alpha(0.13))
 +		close.Children(func() { ui.Icon(c, iconX).Size(9, 9).TextColor(p.muted) })
 +	}
@@ -1654,7 +1771,7 @@
 +}
 --- /dev/null
 +++ b/internal/app/taskbar_widget_view_windows_test.go
-@@ -0,0 +1,283 @@
+@@ -0,0 +1,351 @@
 +package app
 +
 +import (
@@ -1773,52 +1890,120 @@
 +	}
 +}
 +
-+// The close glyph used to stay visible; only entering its own corner
-+// should reveal it, and leaving the corner must clear it again.
-+func TestTaskbarWidgetCloseRevealsOnlyAtCorner(t *testing.T) {
++func taskbarCloseCoverage(tt *ui.Tester, r ui.Rect) uint64 {
++	im := tt.Image()
++	var alpha uint64
++	for y := int(r.Y); y < int(r.Y+r.H); y++ {
++		for x := int(r.X); x < int(r.X+r.W); x++ {
++			_, _, _, a := im.At(x, y).RGBA()
++			alpha += uint64(a)
++		}
++	}
++	return alpha
++}
++
++// The close glyph used to require hovering its corner; entering the cover,
++// lyrics, transport controls or padding must reveal it without enlarging its hit target.
++func TestTaskbarWidgetCloseRevealsAcrossPlayer(t *testing.T) {
++	for _, width := range []int{388, 248, 200, 108} {
++		t.Run(fmt.Sprint(width), func(t *testing.T) {
++			a := newTestApp()
++			a.settings.TaskbarPlayer = true
++			a.pl.Cue([]music.Track{song("1", "First")})
++			a.pl.Hold(time.Second)
++			a.pl.SetLyrics([]lyrics.Line{{At: 0, End: 10 * time.Second, Text: "Current lyric"}})
++			tt := ui.NewTester(a.taskbarWidgetView, width, 40)
++			tt.Frame()
++			close, ok := tt.Find("Close taskbar player")
++			if !ok {
++				t.Fatal("missing close hit area")
++			}
++			tt.Move(-10, -10)
++			tt.Frame()
++			if taskbarCloseCoverage(tt, close) != 0 {
++				t.Fatal("close is painted outside the player")
++			}
++			info, ok := tt.Find("Open Now Playing")
++			if !ok {
++				t.Fatal("missing track surface")
++			}
++			points := []ui.Point{{X: info.X + 10, Y: info.Y + info.H/2}, {X: .5, Y: .5}}
++			labels := []string{"Play/Pause", "Next", "Close taskbar player"}
++			if width >= 190 {
++				labels = append(labels, "Current lyric")
++			}
++			if width >= 240 {
++				labels = append(labels, "Previous", "Like")
++			}
++			for _, label := range labels {
++				r, ok := tt.Find(label)
++				if !ok {
++					t.Fatalf("missing hover target %s", label)
++				}
++				points = append(points, ui.Point{X: r.X + r.W/2, Y: r.Y + r.H/2})
++			}
++			for _, point := range points {
++				tt.Move(point.X, point.Y)
++				tt.Frame()
++				if taskbarCloseCoverage(tt, close) == 0 {
++					t.Fatalf("hover at %v did not reveal close", point)
++				}
++				tt.Move(float32(width)+5, 45)
++				tt.Frame()
++				if taskbarCloseCoverage(tt, close) != 0 {
++					t.Fatalf("close stayed visible after leaving %v", point)
++				}
++			}
++			tt.Move(info.X+10, info.Y+info.H/2)
++			tt.Frame()
++			if tt.Cursor() != ui.CursorGrab {
++				t.Fatal("track area lost the drag cursor")
++			}
++			if err := tt.Click("Play/Pause"); err != nil {
++				t.Fatal(err)
++			}
++			if !a.settings.TaskbarPlayer {
++				t.Fatal("play control was replaced by a larger close target")
++			}
++			if err := tt.Click("Close taskbar player"); err != nil {
++				t.Fatal(err)
++			}
++			if a.settings.TaskbarPlayer {
++				t.Fatal("revealed close control did not hide the taskbar player")
++			}
++		})
++	}
++}
++
++// Keyboard navigation still reveals and activates the close control when
++// the pointer is outside the taskbar player.
++func TestTaskbarWidgetCloseRevealsForKeyboard(t *testing.T) {
 +	a := newTestApp()
 +	a.settings.TaskbarPlayer = true
 +	tt := ui.NewTester(a.taskbarWidgetView, 388, 40)
 +	tt.Frame()
++	tt.Move(-10, -10)
++	tt.Frame()
 +	r, ok := tt.Find("Close taskbar player")
 +	if !ok {
-+		t.Fatal("missing close hit area")
++		t.Fatal("missing close target")
 +	}
-+	coverage := func() uint64 {
-+		im := tt.Image()
-+		var alpha uint64
-+		for y := int(r.Y); y < int(r.Y+r.H); y++ {
-+			for x := int(r.X); x < int(r.X+r.W); x++ {
-+				_, _, _, a := im.At(x, y).RGBA()
-+				alpha += uint64(a)
++	for range 8 {
++		tt.Key(0, ui.KeyTab)
++		tt.Frame()
++		if close, found := tt.Access("Close taskbar player"); found && close.Focused {
++			if taskbarCloseCoverage(tt, r) == 0 {
++				t.Fatal("keyboard focus did not reveal close")
 +			}
++			tt.Key(0, ui.KeyEnter)
++			tt.Frame()
++			if a.settings.TaskbarPlayer {
++				t.Fatal("keyboard could not close the player")
++			}
++			return
 +		}
-+		return alpha
 +	}
-+	idle := coverage()
-+	if idle != 0 {
-+		t.Fatal("close corner is painted without pointer or keyboard focus")
-+	}
-+	tt.Move(r.X+r.W/2, r.Y+r.H/2)
-+	tt.Frame()
-+	if coverage() <= idle {
-+		t.Fatal("entering the close corner did not reveal the control")
-+	}
-+	info, _ := tt.Find("Open Now Playing")
-+	tt.Move(info.X+10, info.Y+info.H/2)
-+	tt.Frame()
-+	if coverage() != idle {
-+		t.Fatal("close control remained visible away from its corner")
-+	}
-+	if tt.Cursor() != ui.CursorGrab {
-+		t.Fatal("track area does not indicate that it can be dragged")
-+	}
-+	tt.Move(r.X+r.W/2, r.Y+r.H/2)
-+	tt.Frame()
-+	tt.ClickAt(r.X+r.W/2, r.Y+r.H/2)
-+	if a.settings.TaskbarPlayer {
-+		t.Fatal("revealed close control did not hide the taskbar player")
-+	}
++	t.Fatal("close target could not be reached with Tab")
 +}
 +
 +// With the main window absent, the taskbar still asks for the current
@@ -1940,7 +2125,7 @@
 +}
 --- /dev/null
 +++ b/internal/app/taskbar_windows.go
-@@ -0,0 +1,373 @@
+@@ -0,0 +1,449 @@
 +//go:build windows
 +
 +package app
@@ -1982,19 +2167,21 @@
 +)
 +
 +type windowsTaskbar struct {
-+	a         *app
-+	win       *mygo.Window
-+	hwnd      uintptr
-+	stop      chan struct{}
-+	wake      chan struct{}
-+	enabled   atomic.Bool
-+	closed    bool              // UI thread only
-+	slots     taskbarPlacements // UI thread only; measured on the worker
-+	dragging  bool
-+	dragSide  string
-+	dragStart taskbarRect
-+	dragGrabX int32
-+	dragPoll  chan struct{} // UI-thread owner; closed for release/cancel/disable
++	a           *app
++	win         *mygo.Window
++	hwnd        uintptr
++	preview     *mygo.Window
++	previewHWND uintptr // assigned before watch starts; stable until shutdown
++	stop        chan struct{}
++	wake        chan struct{}
++	enabled     atomic.Bool
++	closed      bool              // UI thread only
++	slots       taskbarPlacements // UI thread only; measured on the worker
++	dragging    bool
++	dragSide    string
++	dragStart   taskbarRect
++	dragGrabX   int32
++	dragPoll    chan struct{} // UI-thread owner; closed for release/cancel/disable
 +}
 +
 +func (a *app) installTaskbar() {
@@ -2028,6 +2215,28 @@
 +			e.PreventDefault()
 +		}
 +	})
++	w.preview = mygo.NewWindow(mygo.WindowOptions{
++		Title: "MyGo Taskbar Snap Preview", Panel: true, Hidden: true,
++		Frameless: true, Transparent: true, DisableShadow: true,
++		DisableResize: true, DisableMinimize: true, DisableMaximize: true,
++		DisableClose: true, Width: 388, Height: 40,
++		Content: ui.View(a.taskbarSnapPreviewView),
++	})
++	w.previewHWND = w.preview.NativeHandle()
++	// This pane is only a visual destination, never an input surface. The
++	// framework combines WS_EX_TRANSPARENT and WS_EX_LAYERED for actual
++	// click-through behavior, including over another application's window.
++	w.preview.SetIgnoreMouseEvents(true)
++	style, _, _ = taskbarGetLong.Call(w.previewHWND, exStyle)
++	taskbarSetLong.Call(w.previewHWND, exStyle, style|0x08000000|0x80)
++	taskbarSetDWMAttribute.Call(w.previewHWND, 34, uintptr(unsafe.Pointer(&borderNone)), 4)
++	taskbarSetDWMAttribute.Call(w.previewHWND, 33, uintptr(unsafe.Pointer(&squareCorners)), 4)
++	w.preview.OnClose(func(e *mygo.CloseEvent) {
++		if !w.closed && !a.quitting {
++			e.PreventDefault()
++			w.preview.Hide()
++		}
++	})
 +	a.taskbar = w
 +	w.sync()
 +	go w.watch()
@@ -2040,12 +2249,14 @@
 +	on := w.a.settings.TaskbarPlayer && !w.a.quitting
 +	changed := w.enabled.Swap(on) != on
 +	if !on {
++		w.hideSnapPreview()
 +		w.stopDragPolling()
 +		w.dragging = false
 +		w.releaseDragCapture()
 +		w.win.Hide()
 +	} else {
 +		if !w.dragging {
++			w.hideSnapPreview()
 +			r, ok := w.slots.forSide(w.a.settings.TaskbarSide)
 +			w.apply(r, ok)
 +		}
@@ -2064,11 +2275,15 @@
 +		return
 +	}
 +	w.closed = true
++	w.hideSnapPreview()
 +	w.stopDragPolling()
 +	w.dragging = false
 +	w.releaseDragCapture()
 +	w.enabled.Store(false)
 +	close(w.stop)
++	if w.preview != nil {
++		w.preview.Destroy()
++	}
 +	w.win.Destroy()
 +}
 +
@@ -2086,7 +2301,7 @@
 +	defer ticker.Stop()
 +	for {
 +		if w.enabled.Load() {
-+			slots := probe.placements(w.hwnd)
++			slots := probe.placements(w.hwnd, w.previewHWND)
 +			mygo.RunOnMain(func() { w.applyPlacements(slots) })
 +		}
 +		select {
@@ -2188,6 +2403,7 @@
 +
 +func (w *windowsTaskbar) pollDrag() {
 +	if w.closed || !w.dragging || !w.enabled.Load() {
++		w.hideSnapPreview()
 +		w.stopDragPolling()
 +		return
 +	}
@@ -2218,6 +2434,7 @@
 +		w.cancelDrag()
 +		return
 +	}
++	w.updateSnapPreview()
 +	// A held but stationary mouse needs no placement or rendering work.
 +	if current, valid := taskbarWindowRect(w.hwnd); valid && current == r {
 +		return
@@ -2235,6 +2452,7 @@
 +	}
 +	w.stopDragPolling()
 +	w.dragging = false
++	w.hideSnapPreview()
 +	w.a.setTaskbarSide(w.dragSide)
 +	r, ok := w.slots.forSide(w.a.settings.TaskbarSide)
 +	w.apply(r, ok)
@@ -2242,6 +2460,7 @@
 +}
 +
 +func (w *windowsTaskbar) cancelDrag() {
++	w.hideSnapPreview()
 +	if !w.dragging {
 +		w.stopDragPolling()
 +		return
@@ -2253,11 +2472,52 @@
 +	w.releaseDragCapture()
 +}
 +
++func (w *windowsTaskbar) hideSnapPreview() {
++	if w.preview != nil && w.preview.IsVisible() {
++		w.preview.Hide()
++	}
++}
++
++func (w *windowsTaskbar) updateSnapPreview() {
++	r, ok := taskbarSnapPreviewPlacement(w.slots, w.dragSide, w.dragging && w.enabled.Load() && !w.closed)
++	if w.preview == nil || !ok {
++		w.hideSnapPreview()
++		return
++	}
++	current, valid := taskbarWindowRect(w.previewHWND)
++	if valid && current == r && w.preview.IsVisible() {
++		return
++	}
++	// Use physical coordinates, including on mixed-DPI/negative monitors.
++	// A changed rectangle stays hidden until WM_DPICHANGED has settled.
++	w.hideSnapPreview()
++	const flags = 0x10 | 0x200 // NOACTIVATE | NOOWNERZORDER
++	place := func() {
++		// Insert behind the player's HWND within the topmost band. Neither
++		// moving nor revealing the preview ever activates it or takes capture.
++		taskbarSetPos.Call(w.previewHWND, w.hwnd, uintptr(r.Left), uintptr(r.Top), uintptr(r.width()), uintptr(r.height()), flags)
++	}
++	place()
++	current, valid = taskbarWindowRect(w.previewHWND)
++	if !valid || current != r {
++		place()
++		current, valid = taskbarWindowRect(w.previewHWND)
++	}
++	if !valid || current != r {
++		return
++	}
++	w.preview.ShowInactive()
++	// Showing a panel can raise it. Reassert the player's place in front.
++	place()
++	w.preview.Invalidate()
++}
++
 +func (w *windowsTaskbar) apply(r taskbarRect, ok bool) {
 +	if w.closed {
 +		return
 +	}
 +	if !ok || !w.enabled.Load() {
++		w.hideSnapPreview()
 +		w.win.Hide()
 +		return
 +	}
@@ -2283,6 +2543,7 @@
 +		current, valid = taskbarWindowRect(w.hwnd)
 +	}
 +	if !valid || current != r {
++		w.hideSnapPreview()
 +		w.win.Hide()
 +		return
 +	}
@@ -2316,7 +2577,7 @@
 +}
 --- /dev/null
 +++ b/internal/app/taskbar_windows_test.go
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,95 @@
 +//go:build windows
 +
 +package app
@@ -2334,6 +2595,26 @@
 +	var r taskbarRect
 +	if unsafe.Sizeof(r) != 16 || unsafe.Offsetof(r.Right) != 8 || unsafe.Offsetof(r.Bottom) != 12 {
 +		t.Fatal("rectangle does not match the Win32 RECT ABI")
++	}
++}
++
++// A visible destination frame must not reserve its own slot, while other widgets still do.
++func TestTaskbarProbeExcludesOnlyItsOwnPreview(t *testing.T) {
++	for _, tc := range []struct {
++		hwnd uintptr
++		want bool
++	}{
++		{10, true},  // the actual player
++		{20, true},  // the taskbar itself
++		{30, true},  // this player's explicit snap-preview window
++		{40, false}, // another music widget must still reserve space
++	} {
++		if got := taskbarProbeIgnoresWindow(tc.hwnd, 10, 20, []uintptr{30, 0}); got != tc.want {
++			t.Fatalf("window %d ignored=%v, want %v", tc.hwnd, got, tc.want)
++		}
++	}
++	if taskbarProbeIgnoresWindow(30, 10, 20, nil) {
++		t.Fatal("a window without the explicit preview identity was ignored")
 +	}
 +}
 +
