@@ -1,6 +1,8 @@
 # 汽水音乐 · MyGo 插件
 
-0.5.0，适配本机 Windows 上的 MyGo Music，配套主程序补丁支持 0.1.22 和 0.1.21。已完成真实扫码登录，并接入账号资料、音乐库、搜索、歌词、推荐和连续听歌。这是独立开发的 MyGo 插件。
+0.5.0，适配 Windows 与 macOS 上的 MyGo Music，已接入账号资料、音乐库、搜索、歌词、推荐和连续听歌。Windows 已完成真实扫码登录；macOS Apple Silicon 已验证已有会话下的读取、搜索与播放，新设备扫码尚未完成本轮实机验证。这是独立开发的 MyGo 插件；配套主程序补丁支持 0.1.22 和 0.1.21，任务栏功能仅适用于 Windows。
+
+最新 `main` 包含 Mac 依赖查找、插件数据目录缓存及播放平台参数修复。Intel Mac 尚未实机验证；Linux 暂不支持。
 
 0.5.0 按参考界面重新整理「听歌模式」：常用模式采用小图标横卡，探索电台采用封面、标题与简介叠放的宽卡，剩余场景保留在「更多听歌模式」。小图标使用独立 `iconUrl` 字段并随主题着色；原有 `imageUrl` 彩底封面保留，未使用新布局的播放器仍能正常显示封面。配套 MyGo 补丁增加任务栏大字逐字歌词、左右拖拽停靠和关闭按钮。
 
@@ -23,13 +25,15 @@
 - 推荐首页、“换一批推荐”、连续推荐与场景电台；推荐暂时不可用时仍显示原有音乐库。
 - 心形按钮读取真实的歌曲喜欢状态；点击后添加或取消汽水账号中的喜欢，支持普通歌曲和上传原声。
 
-“听歌模式”用于选择推荐内容；顺序、随机、循环仍由 MyGo 的播放控制栏设置。任务栏常驻迷你播放条由配套的 MyGo 0.1.21 本地补丁提供，需要加载补丁版播放器，单独安装音源插件不会修改 Windows 任务栏。拖动封面或歌词区域可选择左侧或右侧的可用位置；右上角关闭按钮隐藏播放条，音乐继续播放，可在设置中重新开启。有真实逐字时间的歌词显示逐字高亮，仅有整行时间的歌词按行显示。
+“听歌模式”用于选择推荐内容；顺序、随机、循环仍由 MyGo 的播放控制栏设置。Windows 任务栏常驻迷你播放条由配套的 MyGo 0.1.22／0.1.21 本地补丁提供，需要加载补丁版播放器。拖动封面或歌词区域可选择左侧或右侧的可用位置；右上角关闭按钮隐藏播放条，音乐继续播放，可在设置中重新开启。有真实逐字时间的歌词显示逐字高亮，仅有整行时间的歌词按行显示。此任务栏播放条尚未移植到 macOS。
 
 播放、推荐和页面浏览只读取资料，不修改远端收藏。只有点击心形按钮（或主动使用 MyGo 的对应快捷键）才会添加或取消汽水账号中的喜欢；歌单和专辑收藏仍为只读。在手机上修改后，可在插件中选择「刷新音乐库」。
 
 ## 安装与使用
 
 先确认下文的本机依赖。Windows x64 可在 MyGo「设置 → 插件 → ＋ → 从 GitHub 安装」输入 `yiyiSmallti/mygo-qishui`，由程序下载正式 Release 的插件 ZIP。也可从 [发布页](https://github.com/yiyiSmallti/mygo-qishui/releases/latest) 下载 `plugin-windows-amd64.zip`，选择从本机安装。不要将仓库完整源码 ZIP 直接当作插件；同名插件若因安装来源不同无法覆盖，请继续使用本机 ZIP 升级。
+
+**macOS 使用最新 `main` 源码目录安装**：下载或拉取仓库后，选择其中的 `qishui-account` 文件夹，按以下步骤加载。Mac 修复已提交到 `main`；Windows Release 包不代表已包含该修复。
 
 1. 在 MyGo「设置 → 插件 → ＋ → 从本机安装」选择此插件文件夹；ZIP 请先解压。升级也使用此入口重新加载，不能只替换文件再开关启用按钮。
 2. 启用「汽水音乐」，允许运行程序，然后切换到此音源。
@@ -43,36 +47,48 @@
 
 播放只使用汽水向当前插件账号返回的完整音频。服务器未提供完整播放信息或时长不足时，插件会报告无法播放，不把试听片段当作整首歌曲。
 
-MyGo 0.1.5 不能直接播放汽水返回的部分音频封装，因此插件先转换为兼容的 FLAC。**AAC 转为 FLAC 不会恢复已损失的信息，也不会提升音质**；界面音质按服务端实际提供的源音质标记，不因输出扩展名为 `.flac` 就标成无损。
+当前插件先将汽水音频转换为 FLAC，用于统一播放与缓存时长校验。**AAC 转为 FLAC 不会恢复已损失的信息，也不会提升音质**；界面音质按服务端实际提供的源音质标记，不因输出扩展名为 `.flac` 就标成无损。
 
 音乐库按汽水接口游标分页，并去除重复条目。当前单个歌单最多载入 5000 首，歌单/收藏列表最多 2000 项。歌单暂未加载完整时会显示说明，重新打开可继续加载；搜索结果过多时可缩小关键词范围。网络较慢或文件较大时，可稍后重试或选择较低音质。
 
 ## 本机依赖
 
-当前版本使用下列已核实存在的本机组件，复制到其他电脑前需要重新配置路径：
+这些依赖需自行安装，插件不会下载或打包第三方运行组件。安装后需在 MyGo 中授予此插件「运行程序」权限，辅助进程负责登录、签名请求和音频转换。
+
+### macOS（Apple Silicon 已验证）
+
+- **Node.js 24 或更新版本**：依次尝试 `/opt/homebrew/bin/node`、`/usr/local/bin/node` 和 `PATH` 中的 `node`。从 Finder／Dock 启动 MyGo 时通常没有交互式 shell 的 `PATH`，仅安装在 nvm 等私有目录的 Node.js 可能无法找到。
+- **FFmpeg**：查找 `/opt/homebrew/bin/ffmpeg` 和 `/usr/local/bin/ffmpeg`。已有 Homebrew 时可运行 `brew install node ffmpeg`；本机已验证 Node.js 24 和 26。
+- **登录浏览器**：查找 `/Applications` 或 `~/Applications` 中的 Google Chrome、Microsoft Edge、Chromium，按此顺序选择。
+- **汽水音乐 3.7.0 官方客户端**：安装到 `/Applications/汽水音乐.app` 或 `~/Applications/汽水音乐.app`。从 `Contents/Resources/app.asar` 读取版本，并优先从 `app-<Node 架构>.asar.unpacked` 加载本机组件，兼容常规 `app.asar.unpacked` 目录。Apple Silicon 使用 ARM64 Node.js 和对应组件；`device.node`、`bdms.node` 及其依赖库应保留在官方安装位置。
+
+macOS 自动识别上述位置，不需要填写 Windows 路径。安装在其他位置的依赖需调整 `local-env.cjs` 或插件内的 Node.js 候选路径后再从本机安装。
+
+### Windows x64
+
+当前 Windows 配置保留原开发环境的已验证路径，换电脑前需核对；浏览器和汽水安装目录另有标准位置查找逻辑：
 
 - Node.js 24：`C:\Program Files\nodejs\node.exe`。
 - 登录浏览器：优先使用 `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`；也支持标准安装目录中的 Edge 或 Chrome。本机另有 `C:\Program Files\Google\Chrome\Application\chrome.exe`。
-- 汽水音乐 3.7.0 安装目录：`D:\Users\22589\AppData\Local\Programs\Soda Music\3.7.0`。设备注册及播放授权使用其中的 `resources\app.asar.unpacked\device.node`；播放信息及歌单搜索请求签名使用 `resources\app.asar.unpacked\bdms.node`，并从 `resources\app.asar` 读取版本。
+- 汽水音乐 3.7.0 安装目录：优先检查原开发路径 `D:\Users\22589\AppData\Local\Programs\Soda Music\3.7.0`，再查找 `%LOCALAPPDATA%\Programs\Soda Music\3.7.0`。设备注册及播放授权使用其中的 `resources\app.asar.unpacked\device.node`；播放信息及歌单搜索请求签名使用 `resources\app.asar.unpacked\bdms.node`，并从 `resources\app.asar` 读取版本。
 - 音频转换组件：`C:\Users\22589\AppData\Local\Programs\Python\Python311\Lib\site-packages\imageio_ffmpeg\binaries\ffmpeg-win-x86_64-v7.1.exe`。
-- MyGo 插件「运行程序」权限。辅助进程负责登录、签名请求和音频转换，访问汽水 API、官方安全 SDK/CDN 及音频 CDN。
 
-这些组件由本机安装提供，不随插件打包。插件不需要启动官方汽水客户端，也不读取它的账号资料或现有登录凭据。
+两端均不需要启动官方汽水客户端，也不读取它的账号资料或现有登录凭据。辅助进程会访问汽水 API、官方安全 SDK/CDN 及音频 CDN。
 
 ## 登录、存储与退出
 
-登录流程为插件建立独立设备身份，使用临时 Edge/Chrome 会话加载官方安全 SDK，取码并轮询。手机确认后，辅助程序和 MyGo 插件分别校验账号，成功才保存登录。本机已完成该流程，原先的 2156 登录问题已通过真实扫码验证解决。
+登录流程为插件建立独立设备身份，使用临时浏览器会话加载官方安全 SDK，取码并轮询。手机确认后，辅助程序和 MyGo 插件分别校验账号，成功才保存登录。Windows 实机已完成该流程，原先的 2156 登录问题已通过真实扫码验证解决；Mac 本轮使用已有会话，尚未重验新设备扫码。
 
-- 登录凭据由 MyGo `host.storage` 保存在本机插件数据中。MyGo 0.1.5 使用 JSON 文件存储，不是系统加密凭据库；无需手动提供密码或 Cookie，不应分享该数据文件。
+- 登录凭据由 MyGo `host.storage` 保存在本机插件数据的 JSON 文件中，不是系统加密凭据库；无需手动提供密码或 Cookie，不应分享该数据文件。
 - 「退出登录」清除此插件的本地账号凭据和内存音乐库缓存，并取消插件正在进行的登录/媒体请求。不会退出手机或官方客户端，也不撤销其登录。
 - 插件自己的匿名设备身份会保留，供下次登录复用。
-- 音频缓存位于 `%APPDATA%\MyGo Music\plugin-data\qishui-account\media-cache`，按账号、歌曲和源音质区分。插件会在后续播放时清理较旧文件，目标总量不超过 512 MiB；退出账号不删除已有音频缓存。
+- 音频缓存使用 MyGo 提供的插件数据目录：Windows 通常为 `%APPDATA%\MyGo Music\plugin-data\qishui-account\media-cache`，macOS 为 `~/Library/Application Support/MyGo Music/plugin-data/qishui-account/media-cache`。缓存按账号、歌曲和源音质区分；插件会在后续播放时清理较旧文件，目标总量不超过 512 MiB；退出账号不删除已有音频缓存。
 - 登录浏览器使用独立临时资料目录和私有进程管道，不读取日常浏览器资料；结束后退出并清理临时目录。
 - MyGo 0.1.5 登录弹窗的「取消」只关闭弹窗，插件流程可能继续等待至二维码过期；「退出登录」可终止该流程。若出现 `2046`，需要先完成官方要求的额外验证，再重新登录。
 
 ## 验证记录
 
-2026-11-07 在本机完成：
+### Windows · 2026-11-07
 
 - 本人扫码后账号校验成功，登录状态可由插件继续读取。
 - 账号、歌单和音乐库接口读取；带官方签名的 PC 歌单搜索返回 20 项结果。
@@ -82,10 +98,20 @@ MyGo 0.1.5 不能直接播放汽水返回的部分音频封装，因此插件先
 - 当前账号推荐实测返回 3 个主模式、45 个场景和 30 个发现电台；连续两批推荐各 6 首、跨批无重复。数量由汽水接口动态决定。
 - 喜欢状态的只读接口已核实普通歌曲和上传原声；添加/取消喜欢使用官方 PC 请求契约并通过模拟测试，未为测试修改真实账号的喜欢。
 
+### macOS Apple Silicon · 2026-11-08
+
+- Node.js 24 和 26 均能加载汽水 3.7.0 的 ARM64 `device.node` 与 `bdms.node`；Chrome、FFmpeg 和插件缓存目录定位正常。
+- 使用已有插件会话校验账号、读取喜欢列表并搜索歌曲；歌曲搜索返回 20 项结果。
+- 播放空响应的原因是 Mac 签名组件与请求中的 `device_platform=windows` 不匹配。修正为 `mac` 后，同一请求由 HTTP 200 空内容变为有效播放信息；Windows 继续使用 `windows`。
+- 两首获授权的完整音频成功下载、转换为 FLAC 并通过完整解码检查，时长约 2:23 和 3:16。MyGo 实际窗口中的《世界真疯狂》进度从 0:23 增长到 0:29。
+- 131 项现有回归测试通过。本轮未重新验证全新设备扫码；系统处于静音、音量为 0，未确认扬声器实际出声。Intel Mac 尚未实测。
+
+### 运行回归测试
+
 在项目根目录运行测试：
 
-```powershell
-& 'C:\Program Files\nodejs\node.exe' --experimental-vm-modules --test tests/*.test.mjs research/music-recommend.test.mjs research/music-likes.test.mjs
+```sh
+npm test
 ```
 
 ## 参考
