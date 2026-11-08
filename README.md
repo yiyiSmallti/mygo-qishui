@@ -79,11 +79,23 @@ Windows 上的 MyGo 汽水音乐插件，以及任务栏播放条和听歌页面
 
 ## 安装与使用
 
+**从 GitHub 安装**：先阅读 [本机依赖说明](qishui-account/README.md#本机依赖)，再在 MyGo「设置 → 插件 → ＋ → 从 GitHub 安装」输入 `yiyiSmallti/mygo-qishui`。MyGo 会从 [最新 Release](https://github.com/yiyiSmallti/mygo-qishui/releases/latest) 获取 `plugin-windows-amd64.zip`；也可下载该 ZIP 从本机安装。发布包的根目录包含 `plugin.json`，只包含插件文件，不包含主程序补丁、账号数据或第三方运行组件。当前发布包仅用于 Windows x64。
+
+仓库还包含播放器补丁和测试，因此请勿将 GitHub 的 **Code → Download ZIP** 整包当作插件安装。已有本机安装的同名插件若被提示来源不同，可继续使用下载的发布 ZIP 从本机升级，保留原安装来源。
+
+从源码目录安装：
+
 1. 按 [插件依赖说明](qishui-account/README.md#本机依赖) 准备 Node.js、汽水客户端本机组件及 FFmpeg，并检查配置路径。
 2. 在 MyGo「设置 → 插件 → ＋ → 从本机安装」选择本仓库的 `qishui-account` 文件夹，启用插件并允许其运行辅助程序。
 3. 切换到汽水音源，在账号菜单选择登录，用汽水 App 扫码并在手机上确认。
 4. 从推荐、听歌模式、喜欢的音乐或音乐库选择歌曲；需要更新资料时使用对应刷新入口。
 5. 需要透明任务栏和紧凑推荐布局时，按 [播放器补丁说明](patches/README.md) 应用补丁并构建主程序。
+
+### 发布与插件目录
+
+[MyGo 官方发布说明](https://github.com/egoist/mygo-music#publishing-a-plugin) 使用 GitHub Topic `mygo-music-plugin` 发现公开仓库；[官网插件页](https://cloudmusic.egoist.dev/plugins/) 的结果取决于 GitHub 搜索索引和页面缓存，并不代表官方认证。
+
+在 Windows PowerShell 运行 `./scripts/package-plugin.ps1` 可生成 `dist/plugin-windows-amd64.zip` 与 `dist/SHA256SUMS`。脚本只打包 Git 追踪的 `qishui-account/` 文件，将它们放在 ZIP 根目录。发布新正式 Release 时上传这两个文件，MyGo 才能从仓库地址正确安装和更新。
 
 ## 当前限制
 
