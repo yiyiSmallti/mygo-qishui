@@ -2835,7 +2835,7 @@
  					lib.liked[id] = !like
 --- /dev/null
 +++ b/internal/app/ui_listening_modes.go
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,73 @@
 +package app
 +
 +import (
@@ -2869,7 +2869,12 @@
 +				painter.ImageRegion(bmp, ui.Rect{}, dst, ui.ImageOptions{Tint: p.text})
 +			})
 +		}
-+		ui.Text(c, st.Name).FontSize(17).FontWeight(600).TextColor(p.text).Grow(1).Shrink(1).MinWidth(0).SingleLine()
++		ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(3).Children(func() {
++			ui.Text(c, st.Name).FontSize(16).FontWeight(600).TextColor(p.text).SingleLine()
++			if st.Description != "" {
++				ui.Text(c, st.Description).FontSize(12.5).TextColor(p.muted).SingleLine()
++			}
++		})
 +	})
 +	if b.Clicked() {
 +		a.playStation(a.library, st)
