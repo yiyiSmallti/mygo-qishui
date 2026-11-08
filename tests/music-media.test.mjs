@@ -33,6 +33,7 @@ async function harness(replies = [], options = {}) {
     clearTimeout(id) { timers.delete(id); },
     host: {
       platform: 'windows', arch: 'amd64',
+      dataDir: 'C:\\Users\\22589\\AppData\\Roaming\\MyGo Music\\plugin-data\\qishui-account',
       storage: {
         get: key => clone(stored.get(key)),
         set: (key, value) => stored.set(key, clone(value)),

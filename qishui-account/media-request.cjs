@@ -7,8 +7,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
+const { sodaComponents, osVersion } = require('./local-env.cjs');
 
-const DEFAULT_INSTALL = 'D:\\Users\\22589\\AppData\\Local\\Programs\\Soda Music\\3.7.0';
 const API_ORIGIN = 'https://api.qishui.com';
 const TRACK_PATH = '/luna/pc/track_v2';
 let signerState;
@@ -21,10 +21,10 @@ function fail(message, code, statusCode) {
   throw error;
 }
 
-function readInstalledVersion(installDir) {
+function readInstalledVersion(asarPath) {
   let fd;
   try {
-    fd = fs.openSync(path.join(installDir, 'resources', 'app.asar'), 'r');
+    fd = fs.openSync(asarPath, 'r');
     const prefix = Buffer.alloc(8);
     if (fs.readSync(fd, prefix, 0, 8, 0) !== 8) throw new Error();
     const headerSize = prefix.readUInt32LE(4);
@@ -74,19 +74,19 @@ function cookieHeader(jar, route) {
   return cookies.map(cookie => cookie.name + '=' + cookie.value).join('; ');
 }
 
-function getSigner(device, installDir) {
+function getSigner(device, soda) {
   if (signerState) {
-    if (signerState.did !== device.did || signerState.installDir !== installDir) {
+    if (signerState.did !== device.did || signerState.unpacked !== soda.unpacked) {
       fail('汽水播放连接的设备已变化，请重新打开播放连接。', 'deviceChanged');
     }
     return signerState;
   }
-  const version = readInstalledVersion(installDir);
+  const version = readInstalledVersion(soda.asar);
   try {
-    const signer = require(path.join(installDir, 'resources', 'app.asar.unpacked', 'bdms.node'));
+    const signer = require(path.join(soda.unpacked, 'bdms.node'));
     if (typeof signer.init !== 'function' || typeof signer.generateHttpSignatureHeaders !== 'function') throw new Error();
     signer.init({ deviceId: device.did });
-    signerState = { signer, did: device.did, version, installDir };
+    signerState = { signer, did: device.did, version, unpacked: soda.unpacked };
     return signerState;
   } catch {
     fail('无法加载本机汽水音乐签名组件，请检查汽水音乐安装是否完整。', 'nativeSdk');
@@ -119,20 +119,23 @@ function addSignature(signer, url, headers) {
  * encryption metadata inside its local playback worker; do not log/cache them.
  * No storage, official app profile, BDTicket state or membership flags are read.
  */
-async function requestMetadata({ route, params = {}, payload, label, device, jar, installDir = DEFAULT_INSTALL, signal, timeoutMs = 12000 }) {
+async function requestMetadata({ route, params = {}, payload, label, device, jar, soda = sodaComponents(), signal, timeoutMs = 12000 }) {
   validateDevice(device);
   const cookie = cookieHeader(jar, route);
   if (signal?.aborted) fail('已取消获取' + label + '。', 'cancelled');
-  if (typeof installDir !== 'string' || !path.isAbsolute(installDir)) fail('汽水音乐安装位置无效。', 'nativeSdk');
-  const { signer, version } = getSigner(device, path.resolve(installDir));
+  if (!soda || !path.isAbsolute(soda.asar) || !path.isAbsolute(soda.unpacked)) fail('未找到本机汽水音乐 3.7.0 安装，请先安装官方客户端。', 'nativeSdk');
+  const { signer, version } = getSigner(device, soda);
   const url = new URL(route, API_ORIGIN);
+  // The request platform must match bdms.node: a Mac signature sent with
+  // device_platform=windows makes TrackV2 return HTTP 200 with an empty body.
+  const mac = os.platform() === 'darwin';
   const query = {
     aid: '386088', app_name: 'luna_pc',
     region: 'cn', geo_region: 'cn', os_region: 'cn', sim_region: '',
     device_id: device.did, cdid: '', iid: device.iid, fp: device.did,
     version_name: version, channel: device.channel,
     network_carrier: '', ac: 'wifi', tz_name: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    resolution: '', device_platform: 'windows', device_type: 'Windows', os_version: os.version(),
+    resolution: '', device_platform: mac ? 'mac' : 'windows', device_type: mac ? 'Mac' : 'Windows', os_version: osVersion(),
     ...params,
   };
   // Unknown official build/version-code fields are deliberately not invented.
@@ -193,7 +196,7 @@ async function requestMetadata({ route, params = {}, payload, label, device, jar
   }
 }
 
-async function getTrackMetadata({ trackId, mediaType = 'track', device, jar, installDir, signal, timeoutMs } = {}) {
+async function getTrackMetadata({ trackId, mediaType = 'track', device, jar, soda, signal, timeoutMs } = {}) {
   if (typeof trackId !== 'string' || !/^\d{1,32}$/.test(trackId)) fail('歌曲标识无效。', 'invalidTrack');
   // Official ugc_clip items use TrackV2 with their original media_type. Video
   // items use a different endpoint/contract and must not be sent as tracks.
@@ -201,11 +204,11 @@ async function getTrackMetadata({ trackId, mediaType = 'track', device, jar, ins
   return requestMetadata({
     route: TRACK_PATH,
     payload: { track_id: trackId, media_type: mediaType, queue_type: '', scene_name: 'search' },
-    label: '歌曲信息', device, jar, installDir, signal, timeoutMs,
+    label: '歌曲信息', device, jar, soda, signal, timeoutMs,
   });
 }
 
-async function getSearchMetadata({ query, kind = 'track', cursor = '0', searchId, device, jar, installDir, signal, timeoutMs } = {}) {
+async function getSearchMetadata({ query, kind = 'track', cursor = '0', searchId, device, jar, soda, signal, timeoutMs } = {}) {
   if (typeof query !== 'string' || !query.trim() || query.length > 300 || /[\u0000-\u001f\u007f]/.test(query)) {
     fail('请输入有效的汽水音乐搜索词。', 'invalidSearch');
   }
@@ -222,7 +225,7 @@ async function getSearchMetadata({ query, kind = 'track', cursor = '0', searchId
       q: query.trim(), cursor, search_id: searchId || crypto.randomUUID(), search_method: 'input',
       debug_params: '', from_search_id: '', search_scene: '',
     },
-    label: '搜索结果', device, jar, installDir, signal, timeoutMs,
+    label: '搜索结果', device, jar, soda, signal, timeoutMs,
   });
 }
 

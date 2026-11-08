@@ -10,9 +10,10 @@ const { spawn } = require('node:child_process');
 const readline = require('node:readline');
 const { pathToFileURL } = require('node:url');
 const { getTrackMetadata, getSearchMetadata } = require('./media-request.cjs');
-const FFMPEG = 'C:/Users/22589/AppData/Local/Programs/Python/Python311/Lib/site-packages/imageio_ffmpeg/binaries/ffmpeg-win-x86_64-v7.1.exe';
-const DEVICE_SDK = 'D:/Users/22589/AppData/Local/Programs/Soda Music/3.7.0/resources/app.asar.unpacked/device.node';
-const CACHE = path.join(process.env.APPDATA || 'C:/Users/22589/AppData/Roaming', 'MyGo Music', 'plugin-data', 'qishui-account', 'media-cache');
+const { ffmpegPath, sodaAddon } = require('./local-env.cjs');
+const FFMPEG = ffmpegPath();
+// Set from the request: MyGo's own data folder for this plugin, per OS.
+let CACHE = '';
 const controller = new AbortController();
 let encoder, temporary = [], stage = 'metadata';
 const timer = setTimeout(() => { controller.abort(); if (encoder) encoder.kill(); }, 26000);
@@ -40,7 +41,16 @@ function allowedAudio(value) {
   } catch {}
   return '';
 }
+// Only <...>/plugin-data/qishui-account/media-cache, as host.dataDir gives it.
+function useCacheDir(value) {
+  if (typeof value !== 'string' || !path.isAbsolute(value) || /[\u0000-\u001f]/.test(value)) fail('音频缓存位置无效。');
+  const dir = path.resolve(value), owner = path.dirname(dir);
+  if (path.basename(dir) !== 'media-cache' || path.basename(owner) !== 'qishui-account'
+      || path.basename(path.dirname(owner)) !== 'plugin-data') fail('音频缓存位置无效。');
+  CACHE = dir;
+}
 function cacheFile(name) {
+  if (!CACHE) fail('音频缓存位置无效。');
   const full = path.resolve(CACHE, name);
   if (path.dirname(full) !== path.resolve(CACHE)) fail('音频缓存位置无效。');
   return full;
@@ -73,14 +83,14 @@ function authorizedKey(stream) {
   if (!spade) return '';
   if (typeof spade !== 'string' || spade.length > 16384) fail('汽水返回的播放授权格式无效。');
   let key;
-  try { key = require(DEVICE_SDK).decodeSpade(spade); }
+  try { key = require(sodaAddon('device.node')).decodeSpade(spade); }
   catch { fail('本机汽水播放组件无法处理这首歌的播放授权。'); }
   if (typeof key === 'string' && /^[a-fA-F0-9]{32}$/.test(key)) return key;
   if (Buffer.isBuffer(key) && key.length === 16) return key.toString('hex');
   fail('本机播放组件返回的授权格式暂不受支持。');
 }
 async function convert(input, output, key, expectedMs) {
-  if (!fs.existsSync(FFMPEG)) fail('未找到本机音频转换组件，请重新配置插件。', 'setup');
+  if (!FFMPEG || !fs.existsSync(FFMPEG)) fail(process.platform === 'darwin' ? '未找到 FFmpeg，请先用 Homebrew 安装 ffmpeg。' : '未找到本机音频转换组件，请重新配置插件。', 'setup');
   const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-protocol_whitelist', 'file,pipe',
     ...(key ? ['-decryption_key', key] : []), '-i', input, '-map', '0:a:0',
     '-vn', '-sn', '-dn', '-map_metadata', '-1', '-c:a', 'flac', '-compression_level', '0',
@@ -130,6 +140,7 @@ async function validCachedFlac(file, expectedMs) {
   finally { if (handle) await handle.close(); }
 }
 async function prepareStream(message, data) {
+  useCacheDir(message.cacheDir);
   if (Number(data.risk_result || 0) !== 0) fail('汽水暂未允许播放这首歌，请在官方客户端检查。');
   const player = data.track_player;
   const mediaType = message.mediaType || 'track';

@@ -7,8 +7,8 @@ const os = require('node:os');
 const zlib = require('node:zlib');
 const { randomUUID, createHash } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
+const { sodaAddon, osVersion } = require('./local-env.cjs');
 
-const ADDON = 'D:/Users/22589/AppData/Local/Programs/Soda Music/3.7.0/resources/app.asar.unpacked/device.node';
 const API = 'https://api.qishui.com/service/2/desktop/device_register/';
 const AID = 386088;
 const VERSION = '3.7.0';
@@ -32,7 +32,8 @@ function validDevice(value) {
 }
 
 function codec(input) {
-  if (!fs.existsSync(ADDON)) throw failure('缺少本机汽水音乐设备编码组件，无法注册新设备。');
+  const addon = sodaAddon('device.node');
+  if (!addon || !fs.existsSync(addon)) throw failure('缺少本机汽水音乐设备编码组件，无法注册新设备。');
   const result = spawnSync(process.execPath, [__filename, '--codec-worker'], {
     input, cwd: __dirname, timeout: 12000, windowsHide: true, maxBuffer: 131072,
   });
@@ -52,7 +53,7 @@ async function ensureDevice(existing) {
     };
   }
   try {
-    if (process.platform !== 'win32') throw failure('当前设备注册组件仅适用于 Windows。');
+    if (!['win32', 'darwin'].includes(process.platform)) throw failure('当前设备注册组件仅适用于 Windows 和 macOS。');
     const cdid = randomUUID();
     // Deliberately use a new installation pseudonym, not a hardware serial.
     const serial = createHash('sha256').update('MyGo qishui plugin:' + randomUUID()).digest('hex');
@@ -60,14 +61,14 @@ async function ensureDevice(existing) {
     const channel = 'mygo';
     const url = new URL(API);
     Object.entries({
-      aid: AID, channel, os: os.type(), os_version: os.version(),
+      aid: AID, channel, os: os.type(), os_version: osVersion(),
       device_platform: 'PC', app_version: VERSION,
     }).forEach(([key, value]) => url.searchParams.set(key, String(value)));
     const header = {
       device_id: '', install_id: '', os: 'Windows', device_platform: 'PC',
       sdk_version: '1.0', sdk_version_code: 1, aid: AID, mc: '00:00:00:00:00:00',
       channel, package: 'com.soda.music', language: Intl.DateTimeFormat().resolvedOptions().locale,
-      app_version: VERSION, os_version: os.version(), device_model: 'no detected',
+      app_version: VERSION, os_version: osVersion(), device_model: 'no detected',
       time_zone: timezone, tz_name: timezone, tz_offset: 0, resolution: 'no detected',
       app_region: 'cn', app_language: 'zh-CN', display_name: 'MyGo Music',
       pc_uuid: cdid, pc_serial: serial,
@@ -107,7 +108,7 @@ module.exports = { ensureDevice };
 // Importing this module performs no native calls, probes or network requests.
 if (require.main === module && process.argv[2] === '--codec-worker') {
   try {
-    const addon = require(ADDON);
+    const addon = require(sodaAddon('device.node'));
     if (typeof addon.applogDecorated !== 'function') throw new Error();
     const input = fs.readFileSync(0);
     if (!input.length || input.length > 65536) throw new Error();

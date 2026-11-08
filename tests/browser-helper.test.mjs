@@ -229,8 +229,8 @@ test('bridge timeout closes input and prevents indefinite waiting', async () => 
 });
 
 test('unsupported platform and denied process permission do not start network requests', async () => {
-  const other = await harness([], { platform: 'darwin' });
-  await assert.rejects(other.api.signIn(), /仅适配 Windows/);
+  const other = await harness([], { platform: 'linux' });
+  await assert.rejects(other.api.signIn(), /仅适配 Windows 和 macOS/);
   assert.equal(other.spawned.length, 0);
   const denied = await harness([], { spawnError: 'the listener has not allowed this plugin to start programs' });
   await assert.rejects(denied.api.signIn(), /not allowed/);

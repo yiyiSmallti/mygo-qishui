@@ -47,6 +47,7 @@ function loadWorker(root, options = {}) {
       if (name === 'node:fs') return fsMock;
       if (name === 'node:child_process') return { spawn: options.spawn || (() => { throw new Error('Unexpected process'); }) };
       if (name === './media-request.cjs') return { getTrackMetadata() {}, getSearchMetadata() {} };
+      if (name === './local-env.cjs') return require('../qishui-account/local-env.cjs');
       if (name.endsWith('device.node')) throw new Error('Native decoder must not run in unit tests');
       return require(name);
     },
@@ -114,11 +115,11 @@ test('a bad existing cache is regenerated only after a full authorized response'
   });
   const data = { risk_result: 0, track: { duration: 10000 }, track_player: { video_model_type: 1,
     video_model: JSON.stringify({ video_duration: 10, video_list: [{ main_url: 'https://v1-luna.douyinvod.com/test', video_meta: { quality: 'higher' } }] }) } };
-  const result = await api.prepareStream({ accountId: 'test-account', trackId: '123' }, data);
+  const result = await api.prepareStream({ accountId: 'test-account', trackId: '123', cacheDir: cache }, data);
   assert.equal(result.type, 'flac'); assert.equal(conversions, 1);
   assert.equal(await api.validCachedFlac(path.join(cache, name), 10000), true);
   data.track_player.video_model_type = 2;
-  await assert.rejects(api.prepareStream({ accountId: 'test-account', trackId: '123' }, data), /完整音频/);
+  await assert.rejects(api.prepareStream({ accountId: 'test-account', trackId: '123', cacheDir: cache }, data), /完整音频/);
   assert.equal(conversions, 1, 'a cached file must not turn a preview authorization into full playback');
 });
 
@@ -137,7 +138,7 @@ test('published UGC clip model 3 requires matching media type and complete clip 
   const name = crypto.createHash('sha256').update('ugc_clip:test-account:123:higher:10000').digest('hex') + '.flac';
   fs.writeFileSync(path.join(cache, name), flac());
   const api = loadWorker(root);
-  const message = { accountId: 'test-account', trackId: '123', mediaType: 'ugc_clip' };
+  const message = { accountId: 'test-account', trackId: '123', mediaType: 'ugc_clip', cacheDir: cache };
   const data = { risk_result: 0, track: { duration: 10000, media_type: 'ugc_clip' }, track_player: { video_model_type: 3,
     video_model: JSON.stringify({ video_duration: 10, video_list: [{ main_url: 'https://v1-luna.douyinvod.com/test', video_meta: { quality: 'higher' } }] }) } };
   const result = await api.prepareStream(message, data);
@@ -183,7 +184,8 @@ test('signed requests reject nested status_info errors including expired session
       requestBody = options.body && JSON.parse(options.body);
       return { ok: true, headers: { get: () => null }, text: async () => JSON.stringify(responseData) };
     },
-    require: name => name.endsWith('bdms.node') ? { init() {}, generateHttpSignatureHeaders: () => 'x-test\r\ntest\r\n' } : require(name),
+    require: name => name.endsWith('bdms.node') ? { init() {}, generateHttpSignatureHeaders: () => 'x-test\r\ntest\r\n' }
+      : require(name === './local-env.cjs' ? '../qishui-account/local-env.cjs' : name),
   });
   new vm.Script(requestSource).runInContext(context);
   const api = context.module.exports;

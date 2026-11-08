@@ -5,7 +5,25 @@ const SESSION = 'qishui-session-v1';
 const DIAGNOSTIC = 'qishui-login-diagnostic-v1';
 const DEVICE = 'qishui-device-v1';
 const VERSION = '0.5.0';
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const UA = {
+  windows: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  darwin: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+};
+// Node.js runs the helpers. MyGo started from Finder/Dock has no shell PATH,
+// so macOS tries the Homebrew and nodejs.org locations before a bare name.
+const NODE = {
+  windows: ['C:\\Program Files\\nodejs\\node.exe'],
+  darwin: ['/opt/homebrew/bin/node', '/usr/local/bin/node', 'node'],
+};
+const supportedPlatform = () => typeof host !== 'undefined' && host && Object.prototype.hasOwnProperty.call(NODE, host.platform);
+
+function spawnHelper(script) {
+  let lastError;
+  for (const command of NODE[host.platform] || []) {
+    try { return host.spawn(command, [script]); } catch (error) { lastError = error; }
+  }
+  throw lastError || failure('当前系统暂不支持运行汽水辅助程序。');
+}
 let generation = 0;
 let signingIn = false;
 let activeHelper = null;
@@ -102,7 +120,7 @@ function hasSession(jar) {
 
 async function request(path, jar, body, flow, contentType) {
   if (!path.startsWith('/') || path.startsWith('//')) throw failure('接口路径无效。');
-  const headers = { 'User-Agent': UA, 'Accept': 'application/json, text/javascript' };
+  const headers = { 'User-Agent': UA[host.platform] || UA.windows, 'Accept': 'application/json, text/javascript' };
   const cookie = cookieHeader(jar, path.split('?')[0]);
   if (cookie) headers.Cookie = cookie;
   if (path.startsWith('/passport/')) {
@@ -198,9 +216,9 @@ export async function signIn() {
   let qrToken = '';
   const current = () => { if (epoch !== generation) throw failure('登录已取消。'); };
   try {
-    if (host.platform !== 'windows') throw failure('当前浏览器登录版仅适配 Windows。');
+    if (!supportedPlatform()) throw failure('当前浏览器登录版仅适配 Windows 和 macOS。');
     host.signInPrompt({ text: '正在初始化独立设备并加载汽水官方登录 SDK…' });
-    helper = host.spawn('C:\\Program Files\\nodejs\\node.exe', ['./browser-helper.cjs']);
+    helper = spawnHelper('./browser-helper.cjs');
     activeHelper = helper;
     helper.write(JSON.stringify({ type: 'start', device: device || null }) + '\n');
     const timeout = new Promise((_, reject) => {
@@ -294,9 +312,11 @@ function requestMedia(operation, params) {
   const work = (async () => {
     let helper, timer;
     try {
-      helper = host.spawn('C:\\Program Files\\nodejs\\node.exe', ['./media-helper.cjs']);
+      const cacheDir = mediaCacheDir();
+      if (!cacheDir) throw failure('MyGo 未提供插件数据目录，无法缓存音频。', 'unavailable');
+      helper = spawnHelper('./media-helper.cjs');
       mediaProcesses.add(helper);
-      helper.write(JSON.stringify({ ...params, operation, device: saved.device || host.storage.get(DEVICE),
+      helper.write(JSON.stringify({ ...params, operation, cacheDir, device: saved.device || host.storage.get(DEVICE),
         jar: saved.jar, accountId: saved.account && saved.account.id }) + '\n');
       const timeout = new Promise((_, reject) => { timer = setTimeout(() => {
         try { helper.closeStdin(); } catch (_) {}
@@ -331,13 +351,33 @@ function playbackIdentity(value) {
   return { trackId: match[2], mediaType: match[1] || 'track' };
 }
 
+// MyGo's per-plugin data folder (host.dataDir) plus media-cache, which the
+// worker writes to; only <...>/plugin-data/qishui-account is accepted.
+function mediaCacheDir() {
+  const dir = typeof host !== 'undefined' && host && typeof host.dataDir === 'string' ? host.dataDir : '';
+  if (!dir || /[\u0000-\u001f\u007f]/.test(dir)) return '';
+  const windows = /^[a-z]:[\\/]/i.test(dir);
+  if (!windows && !dir.startsWith('/')) return '';
+  const parts = dir.split(windows ? /[\\/]+/ : /\/+/).filter(Boolean);
+  if (parts.includes('..') || parts.includes('.') || parts.slice(-2).join('/') !== 'plugin-data/qishui-account') return '';
+  return (windows ? '' : '/') + parts.concat('media-cache').join(windows ? '\\' : '/');
+}
+
+// URL path the worker's pathToFileURL gives for that folder: /C:/... on Windows.
+function mediaCacheURLPath() {
+  const dir = mediaCacheDir();
+  if (!dir) return '';
+  return /^[a-z]:/i.test(dir) ? '/' + dir.replace(/\\/g, '/') + '/' : dir + '/';
+}
+
 export async function stream({ id, quality = 'standard' } = {}) {
   const result = await requestMedia('stream', { ...playbackIdentity(id), quality });
   let url, path;
   try { url = new URL(result && result.url); path = decodeURIComponent(url.pathname); }
   catch (_) { throw failure('音乐组件未返回有效音频。', 'unavailable'); }
-  if (url.protocol !== 'file:' || url.hostname || url.search || url.hash || result.type !== 'flac' ||
-    !/^\/C:\/Users\/22589\/AppData\/Roaming\/MyGo Music\/plugin-data\/qishui-account\/media-cache\/[a-f0-9]{64}\.flac$/.test(path))
+  const cache = mediaCacheURLPath();
+  if (url.protocol !== 'file:' || url.hostname || url.search || url.hash || result.type !== 'flac' || !cache ||
+    !path.startsWith(cache) || !/^[a-f0-9]{64}\.flac$/.test(path.slice(cache.length)))
     throw failure('音频缓存来源不符合预期。', 'unavailable');
   return result;
 }

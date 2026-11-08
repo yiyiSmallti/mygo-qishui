@@ -8,6 +8,7 @@ const { spawn } = require('node:child_process');
 const { randomUUID, randomBytes } = require('node:crypto');
 const readline = require('node:readline');
 const { ensureDevice } = require('./device.cjs');
+const { browserPath, scanLabel } = require('./local-env.cjs');
 
 const ORIGIN = 'https://api.qishui.com';
 const GLUE = 'https://lf-headquarters-speed.yhgfb-cn-static.com/obj/rc-client-security/web/glue/1.0.0.36/sdk-glue.js';
@@ -124,13 +125,13 @@ async function cleanup() {
   }
 }
 async function startBrowser() {
-  const executable = ['C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-    'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
-    'C:/Program Files/Google/Chrome/Application/chrome.exe'].find(p => fs.existsSync(p));
-  if (!executable) throw fail('未找到 Microsoft Edge 或 Chrome');
+  const executable = browserPath();
+  if (!executable) throw fail(process.platform === 'darwin' ? '未找到 Google Chrome 或 Microsoft Edge' : '未找到 Microsoft Edge 或 Chrome');
   profile = fs.mkdtempSync(path.join(os.tmpdir(), 'mygo-qishui-login-'));
+  // macOS: keep the throwaway profile away from the login keychain prompt.
+  const platformFlags = process.platform === 'darwin' ? ['--use-mock-keychain', '--password-store=basic'] : [];
   child = spawn(executable, ['--headless=new', '--remote-debugging-pipe', '--no-first-run',
-    '--no-default-browser-check', '--user-data-dir=' + profile, 'about:blank'],
+    '--no-default-browser-check', ...platformFlags, '--user-data-dir=' + profile, 'about:blank'],
   { windowsHide: true, stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
   child.stdio[4].setEncoding('utf8');
   child.stdio[4].on('data', receive);
@@ -233,7 +234,7 @@ async function login(existing) {
   const original = new URL(data.qrcode_index_url);
   if (original.protocol !== 'https:' || original.hostname !== 'bff-pc.qishui.com' || original.username || original.password || original.searchParams.getAll('token').length !== 1 || original.searchParams.get('token') !== data.token) throw fail('二维码来源或会话不符合预期');
   const qr = new URL('https://bff-pc.qishui.com/light/invoke/scan_login');
-  qr.searchParams.set('token', data.token); qr.searchParams.set('os', 'Windows'); qr.searchParams.set('computer_name', 'MyGo Music');
+  qr.searchParams.set('token', data.token); qr.searchParams.set('os', scanLabel()); qr.searchParams.set('computer_name', 'MyGo Music');
   const qrURL = qr.href.replace(/\+/g, '%20');
   if (!probe) emit({ type: 'qr', url: qrURL, status: 'new' });
   const body = new URLSearchParams({ need_logo: 'false', need_short_url: 'false', is_frontier: 'true',
