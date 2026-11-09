@@ -62,19 +62,6 @@ function ffmpegPath() {
   return firstExisting((process.env.PATH || '').split(path.delimiter).filter(Boolean).map(dir => path.join(dir.replace(/^"(.*)"$/, '$1'), 'ffmpeg.exe')));
 }
 
-function browserPath() {
-  if (process.platform === 'darwin') {
-    return firstExisting([
-      ...macApplications('Google Chrome.app/Contents/MacOS/Google Chrome'),
-      ...macApplications('Microsoft Edge.app/Contents/MacOS/Microsoft Edge'),
-      ...macApplications('Chromium.app/Contents/MacOS/Chromium'),
-    ]);
-  }
-  return firstExisting(['C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-    'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
-    'C:/Program Files/Google/Chrome/Application/chrome.exe']);
-}
-
 // OS version as the desktop client reports it: Windows keeps os.version()
 // ("Windows 11 Pro"); macOS uses the product version ("26.0"), not the kernel
 // banner os.version() returns there.
@@ -111,4 +98,4 @@ function deviceName() {
   return name;
 }
 
-module.exports = { sodaComponents, sodaAddon, ffmpegPath, browserPath, scanLabel, deviceName, osVersion };
+module.exports = { sodaComponents, sodaAddon, ffmpegPath, scanLabel, deviceName, osVersion };

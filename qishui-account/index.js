@@ -4,7 +4,7 @@ const ORIGIN = 'https://api.qishui.com';
 const SESSION = 'qishui-session-v1';
 const DIAGNOSTIC = 'qishui-login-diagnostic-v1';
 const DEVICE = 'qishui-device-v1';
-const VERSION = '0.5.2';
+const VERSION = '0.6.0';
 const UA = {
   windows: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   darwin: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -229,89 +229,67 @@ export async function signIn() {
   if (signingIn) throw failure('登录窗口已打开，请完成当前扫码。');
   signingIn = true;
   const epoch = ++generation;
-  const jar = {};
-  let helper, timer, device = host.storage.get(DEVICE);
-  let qrToken = '';
+  let helper, timer, helperClosed = false;
+  const closeHelper = () => {
+    if (helper && !helperClosed) { helperClosed = true; try { helper.closeStdin(); } catch (_) {} }
+    if (activeHelper === helper) activeHelper = null;
+  };
   const current = () => { if (epoch !== generation) throw failure('登录已取消。'); };
   try {
-    if (!supportedPlatform()) throw failure('当前浏览器登录版仅适配 Windows 和 macOS。');
-    host.signInPrompt({ text: '正在初始化独立设备并加载汽水官方登录 SDK…' });
-    helper = spawnHelper('./browser-helper.cjs');
-    activeHelper = helper;
-    helper.write(JSON.stringify({ type: 'start', device: device || null, ...(typeof host.dataDir === 'string' ? { dataDir: host.dataDir } : {}) }) + '\n');
+    if (!supportedPlatform()) throw failure('当前内嵌登录版仅适配 Windows 和 macOS。');
+    if (host.features?.scriptedWebSignIn !== true || typeof host.webSignIn !== 'function') {
+      throw failure('当前播放器尚未支持内嵌汽水登录，请先安装配套的 MyGo 内嵌登录版，再重新登录。', 'setup');
+    }
+    host.signInPrompt({ text: '正在准备汽水插件设备，扫码和二次验证将在 MyGo 内完成，无需打开浏览器。' });
+    helper = spawnHelper('./device-helper.cjs'); activeHelper = helper;
+    helper.write(JSON.stringify({ type: 'start', device: host.storage.get(DEVICE) || null, ...(typeof host.dataDir === 'string' ? { dataDir: host.dataDir } : {}) }) + '\n');
     let timedOut;
     const timeout = new Promise((_, reject) => { timedOut = reject; });
-    const arm = milliseconds => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        try { helper.closeStdin(); } catch (_) {}
-        timedOut(failure('登录已超时，请重新登录。'));
-      }, milliseconds);
-    };
+    const arm = milliseconds => { clearTimeout(timer); timer = setTimeout(() => { closeHelper(); timedOut(failure('登录已超时，请重新登录。')); }, milliseconds); };
     arm(255000);
-    let preparing = false;
+    let preparing = false, message;
     while (true) {
-      const line = await Promise.race([helper.readLine(), timeout]);
-      current();
-      if (line === null) throw failure('登录辅助程序已退出，尚未完成账号连接。');
-      if (typeof line !== 'string' || line.length > 262144) throw failure('登录辅助程序返回无效消息。');
-      let message;
-      try { message = JSON.parse(line); } catch (_) { throw failure('登录辅助程序返回无效消息。'); }
-      if (!message || typeof message !== 'object') throw failure('登录辅助程序返回无效消息。');
+      const line = await Promise.race([helper.readLine(), timeout]); current();
+      if (line === null) throw failure('设备辅助程序已退出，尚未完成账号连接。');
+      if (typeof line !== 'string' || line.length > 262144) throw failure('设备辅助程序返回无效消息。');
+      try { message = JSON.parse(line); } catch (_) { throw failure('设备辅助程序返回无效消息。'); }
+      if (!message || typeof message !== 'object') throw failure('设备辅助程序返回无效消息。');
       if (message.type === 'progress') {
         if (!preparing) { arm(720000); preparing = true; }
         host.signInPrompt({ text: typeof message.text === 'string' ? message.text.slice(0, 160) : '正在准备汽水组件…' });
-      } else if (message.type === 'ready') {
-        arm(255000);
-      } else if (message.type === 'verification') {
-        arm(240000);
-        host.signInPrompt({ text: '汽水要求额外安全验证。请在电脑上弹出的官方验证窗口中继续；完成后 MyGo 会接着登录，无需重新扫码。' });
-      } else if (message.type === 'device') {
-        const d = message.device;
-        if (!d || d.schema !== 1 || d.aid !== 386088 || typeof d.did !== 'string' || typeof d.iid !== 'string' ||
-          !/^[1-9]\d{8,24}$/.test(d.did) || !/^[1-9]\d{8,24}$/.test(d.iid)) throw failure('登录设备注册结果无效。');
-        device = d;
-        host.storage.set(DEVICE, d);
-      } else if (message.type === 'qr') {
-        let qr;
-        try { qr = new URL(message.url); } catch (_) { throw failure('登录二维码无效。'); }
-        const tokens = qr.searchParams.getAll('token');
-        const computers = qr.searchParams.getAll('computer_name');
-        if (qr.origin !== 'https://bff-pc.qishui.com' || qr.pathname !== '/light/invoke/scan_login' || qr.username || qr.password ||
-          tokens.length !== 1 || !tokens[0] || (qrToken && tokens[0] !== qrToken) ||
-          computers.length !== 1 || !computers[0] || computers[0].length > 255 || /[\u0000-\u001f\u007f]/.test(computers[0])) throw failure('登录二维码来源或会话不符合预期。');
-        qrToken = tokens[0];
-        host.signInPrompt({ qr: qr.href, text: message.status === 'scanned'
-          ? '已扫码，请在汽水音乐 App 上确认登录。'
-          : '新版 ' + VERSION + '：请用汽水音乐 App「搜索 → 扫一扫」扫码，并在手机确认登录此电脑（' + computers[0] + '）。' });
-      } else if (message.type === 'error') {
-        if (message.code === 'setup') throw failure(typeof message.description === 'string' ? message.description.slice(0, 220) : '汽水组件准备失败，请检查网络后重试。', 'setup');
-        const stage = ['注册插件设备', '初始化浏览器', '加载官方登录 SDK', '初始化登录设备', '获取二维码', '扫码确认', '校验账号'].includes(message.stage) ? message.stage : '账号登录';
-        platformFailure({ error_code: message.code || 'unknown', data: { description: message.description, status: message.status, verificationEntry: message.verificationEntry } }, stage, jar, { token: qrToken });
-      } else if (message.type === 'complete') {
-        if (!qrToken || !Array.isArray(message.cookies) || !message.account || typeof message.account.id !== 'string') throw failure('账号连接结果不完整。');
-        for (const cookie of message.cookies) {
-          if (cookie && typeof cookie.name === 'string' && /^[!#$%&'*+.^_`|~0-9a-z-]+$/i.test(cookie.name) &&
-            typeof cookie.value === 'string' && !/[;\r\n]/.test(cookie.value) && typeof cookie.path === 'string' && cookie.path.startsWith('/') &&
-            typeof cookie.expires === 'number' && Number.isFinite(cookie.expires)) {
-            jar[cookie.name + '|' + cookie.path] = { name: cookie.name, value: cookie.value, path: cookie.path, expires: cookie.expires };
-          }
-        }
-        const account = await verifyAccount(jar, device);
-        current();
-        if (account.id !== message.account.id) throw failure('账号校验结果不一致，未保存登录。');
-        host.storage.set(SESSION, { jar, account, device });
-        host.storage.remove(DIAGNOSTIC);
-        host.signInPrompt({ text: '账号已验证，登录成功。' });
-        return account;
-      } else throw failure('登录辅助程序返回未知消息。');
+      } else if (message.type === 'device') break;
+      else if (message.type === 'error') throw failure(typeof message.description === 'string' ? message.description.slice(0, 220) : '汽水设备初始化失败，请检查网络后重试。', message.code === 'setup' ? 'setup' : undefined);
+      else throw failure('设备辅助程序返回未知消息。');
     }
-  } finally {
-    clearTimeout(timer);
-    if (helper) { try { helper.closeStdin(); } catch (_) {} }
-    if (activeHelper === helper) activeHelper = null;
-    signingIn = false;
-  }
+    const device = message.device;
+    if (!device || device.schema !== 1 || device.aid !== 386088 || typeof device.did !== 'string' || typeof device.iid !== 'string'
+      || !/^[1-9]\d{8,24}$/.test(device.did) || !/^[1-9]\d{8,24}$/.test(device.iid)
+      || typeof message.computerName !== 'string' || !message.computerName || message.computerName.length > 255 || /[\u0000-\u001f\u007f]/.test(message.computerName)
+      || !['Windows', 'Mac'].includes(message.osLabel)) throw failure('登录设备注册结果无效。');
+    host.storage.set(DEVICE, device); closeHelper(); clearTimeout(timer);
+    host.signInPrompt({ text: '请在 MyGo 内嵌登录窗口扫码，并完成官方要求的验证。登录完成前请保留该窗口。' });
+    const result = await host.webSignIn({ url: ORIGIN + '/', cookiesOf: ORIGIN + '/', untilAny: ['sessionid', 'sessionid_ss'],
+      scriptFiles: ['browser-info.js', 'browser-verification.js', 'embedded-login.js'],
+      scriptData: { device, computerName: message.computerName, osLabel: message.osLabel } });
+    current();
+    if (result?.error) {
+      const code = result.error.code;
+      const description = code === 'closed' ? '内嵌登录窗口已关闭，登录尚未完成。请重新登录，并在完成前保留验证窗口。'
+        : code === 'timeout' ? '内嵌登录已超时，请重新登录。'
+        : code === 'load' ? '内嵌登录页面未能加载，请检查网络后重试。' : typeof result.error.message === 'string' ? result.error.message.slice(0, 500) : '内嵌登录未能完成，请重新登录。';
+      host.storage.set(DIAGNOSTIC, { version: VERSION, time: new Date().toISOString(), stage: '内嵌登录', code: String(code || 'page'), description });
+      throw failure(description);
+    }
+    if (!result || typeof result.cookie !== 'string' || result.cookie.length > 65536 || /[\r\n\u0000]/.test(result.cookie)) throw failure('内嵌登录未返回有效凭据。');
+    const jar = {};
+    for (const part of result.cookie.split(';')) {
+      const pair = /^\s*([!#$%&'*+.^_`|~0-9A-Za-z-]+)=(.*)$/.exec(part);
+      if (pair && pair[2] && !/[;\r\n]/.test(pair[2])) jar[pair[1] + '|/'] = { name: pair[1], value: pair[2], path: '/', expires: 0 };
+    }
+    const account = await verifyAccount(jar, device); current();
+    host.storage.set(SESSION, { jar, account, device }); host.storage.remove(DIAGNOSTIC);
+    host.signInPrompt({ text: '账号已验证，登录成功。' }); return account;
+  } finally { clearTimeout(timer); closeHelper(); signingIn = false; }
 }
 
 export async function account() {

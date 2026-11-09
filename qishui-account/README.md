@@ -1,7 +1,8 @@
 # 汽水音乐 · MyGo 插件
 
-0.5.2，适配 Windows 与 macOS 上的 MyGo Music，已接入账号资料、音乐库、搜索、歌词、推荐和连续听歌。Windows 已完成真实扫码登录；macOS Apple Silicon 已验证已有会话下的读取、搜索与播放，新设备扫码尚未完成本轮实机验证。这是独立开发的 MyGo 插件；配套主程序补丁支持 0.1.22 和 0.1.21，任务栏功能仅适用于 Windows。
+0.6.0 内嵌登录预览版，必须配合本仓库新增内嵌登录补丁的 MyGo v0.1.22。扫码、官方 SDK 和二次验证在 MyGo 自带的隔离窗口内完成，不启动 Edge／Chrome。播放器原有账号、音乐库、搜索、歌词、推荐及播放功能继续保留，任务栏功能仅适用于 Windows。
 
+Mac 已真实取码并显示二维码，安全验证回调、取消、二维码来源和票据不一致场景已在原生 WebView 检查；Windows 配套程序已编译，运行及真实账号二次验证待人工确认。最新正式 Release 仍为 0.5.2。
 0.5.2 修复官方 `auth.zijieapi.com` 二次验证入口被误拦截的问题，并在入口被拒绝时显示公开域名与固定原因；诊断不保存 URL 路径、查询参数、账号信息或票据。
 
 0.5.1 包含 Mac 依赖查找、插件数据目录缓存及播放平台参数修复，新增 Node.js 路径设置、Windows 免安装组件、系统扫码设备名和官方二次验证接续。Intel Mac 尚未实机验证；Linux 暂不支持。
@@ -33,15 +34,17 @@
 
 ## 安装与使用
 
-先确认下文的本机依赖。Windows x64 可在 MyGo「设置 → 插件 → ＋ → 从 GitHub 安装」输入 `yiyiSmallti/mygo-qishui`，由程序下载正式 Release 的插件 ZIP。也可从 [发布页](https://github.com/yiyiSmallti/mygo-qishui/releases/latest) 下载 `plugin-windows-amd64.zip`，选择从本机安装。不要将仓库完整源码 ZIP 直接当作插件；同名插件若因安装来源不同无法覆盖，请继续使用本机 ZIP 升级。
+[v0.6.0-preview.1 发布页](https://github.com/yiyiSmallti/mygo-qishui/releases/tag/v0.6.0-preview.1) 提供两个平台的完整配套包。
 
-**Apple Silicon macOS**：可从同一 GitHub 仓库安装，由 MyGo 选择 `plugin-darwin-arm64.zip`；也可从发布页下载后解压并从本机安装。源码安装选择仓库中的 `qishui-account` 文件夹。Mac 仍需下文的官方客户端本机组件。
+先正常退出原 MyGo，备份程序后运行预览包内的完整配套播放器。不要覆盖 `plugin-data` 账号目录。
 
-1. 在 MyGo「设置 → 插件 → ＋ → 从本机安装」选择此插件文件夹；ZIP 请先解压。升级也使用此入口重新加载，不能只替换文件再开关启用按钮。
-2. 启用「汽水音乐」，允许运行程序，然后切换到此音源。
-3. 在账号菜单选择「登录」，使用**汽水音乐 App**的扫一扫扫描二维码，并在手机上确认。
-4. 账号校验通过后显示昵称和头像。打开「喜欢的音乐」「音乐库」或「收藏专辑」，也可以使用 MyGo 的搜索框搜索四类内容。
-5. 点击歌曲播放；首次播放需获取并转换音频，相同账号、歌曲和音质可复用本地缓存。
+1. 在 MyGo「设置 → 插件 → ＋ → 从本机安装」选择预览包中的 `plugin-0.6.0.zip` 或解压后的 `qishui-account` 文件夹。
+2. 启用「汽水音乐」，允许运行程序，然后切换到此音源。若旧插件来自 GitHub 导致来源冲突，先备份数据，在设置中移除旧插件再安装本机包；v0.1.22 移除插件保留其数据，不要手工删除数据目录。
+3. 在账号菜单选择「登录」，用手机汽水 App 扫描 MyGo 内嵌窗口中的二维码并确认。
+4. 需要官方安全验证时，在同一 MyGo 窗口完成。等待账号校验成功后窗口自动关闭；提前关闭会结束本次登录，原账号保留。
+5. 从推荐、音乐库或搜索中选择歌曲。首次播放需要转换音频，本机依赖见下文。
+
+原版 MyGo 不支持此脚本登录 API，单换插件无法使用内嵌登录。不要用 GitHub「最新正式版」入口寻找此预览版；那里仍为 0.5.2。源码构建需要先应用 v0.1.22 任务栏补丁，再应用内嵌登录补丁。
 
 原有插件登录状态可继续使用，不需要为升级重复扫码。二维码来自 `bff-pc.qishui.com/light/invoke/scan_login`，扫码终端名称使用当前系统的设备名称：Windows 使用计算机名，macOS 使用系统设置中的电脑名称。
 
@@ -55,7 +58,7 @@
 
 ## 本机依赖
 
-Node.js、登录浏览器和 FFmpeg 需自行安装。Windows x64 可自动从官方安装包提取汽水组件，无需安装或启动完整汽水客户端；仓库和插件 ZIP 不附带原生组件。安装后需在 MyGo 中授予此插件「运行程序」权限，辅助进程负责登录、签名请求和音频转换。
+Node.js 和 FFmpeg 需自行安装。登录使用配套 MyGo 内嵌窗口，Windows 需要 WebView2 Runtime，Mac 使用系统 WebKit，无需单独安装 Chrome／Edge。Windows x64 可自动从官方安装包提取汽水组件，无需安装或启动完整汽水客户端；仓库和插件 ZIP 不附带原生组件。安装后需在 MyGo 中授予此插件「运行程序」权限，辅助进程负责设备准备、签名请求和音频转换，扫码与验证由 MyGo 内嵌窗口完成。
 
 ### Node.js 路径设置
 
@@ -69,7 +72,7 @@ Windows 可在 PowerShell 中运行 `where.exe node` 查找当前安装位置，
 
 - **Node.js 24 或更新版本**：依次尝试 `/opt/homebrew/bin/node`、`/usr/local/bin/node` 和 `PATH` 中的 `node`。从 Finder／Dock 启动 MyGo 时通常没有交互式 shell 的 `PATH`，仅安装在 nvm 等私有目录的 Node.js 可能无法找到。
 - **FFmpeg**：查找 `/opt/homebrew/bin/ffmpeg` 和 `/usr/local/bin/ffmpeg`。已有 Homebrew 时可运行 `brew install node ffmpeg`；本机已验证 Node.js 24 和 26。
-- **登录浏览器**：查找 `/Applications` 或 `~/Applications` 中的 Google Chrome、Microsoft Edge、Chromium，按此顺序选择。
+- **内嵌登录**：使用系统 WebKit，由配套 MyGo 播放器显示，无需外部浏览器。
 - **汽水音乐 3.7.0 官方客户端**：安装到 `/Applications/汽水音乐.app` 或 `~/Applications/汽水音乐.app`。从 `Contents/Resources/app.asar` 读取版本，并优先从 `app-<Node 架构>.asar.unpacked` 加载本机组件，兼容常规 `app.asar.unpacked` 目录。Apple Silicon 使用 ARM64 Node.js 和对应组件；`device.node`、`bdms.node` 及其依赖库应保留在官方安装位置。
 
 macOS 自动识别上述位置，不需要填写 Windows 路径。Node.js 安装在其他位置时可在插件设置中指定；其他依赖使用非标准位置时仍需调整 `local-env.cjs` 后再从本机安装。
@@ -79,7 +82,7 @@ macOS 自动识别上述位置，不需要填写 Windows 路径。Node.js 安装
 Windows x64 新增免安装组件准备流程（0.5.1 已发布，Windows 实机仍待验证）：
 
 - Node.js 24 或更新版本：优先使用 `PATH` 中的 `node`，找不到时再尝试 `C:\Program Files\nodejs\node.exe`；也可在插件设置中指定完整路径。
-- 登录浏览器：优先使用 `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`；也支持标准安装目录中的 Edge 或 Chrome。本机另有 `C:\Program Files\Google\Chrome\Application\chrome.exe`。
+- **内嵌登录**：配套 MyGo 使用 WebView2 Runtime，缺少时需安装微软 WebView2 Runtime；不查找或启动 Edge／Chrome 可执行文件。
 - **汽水组件免安装**：未找到完整的官方客户端组件时，首次登录或请求播放信息会从汽水官方 CDN 下载固定的 **3.7.0 x64** 安装包（约 144 MiB），校验 SHA256，再用系统 `tar.exe` 提取 `app.asar`、`device.node`、`bdms.node` 和 `metasecml.dll`。**不运行安装包，不创建官方客户端快捷方式或自启动项**。已有客户端时，查找 `%LOCALAPPDATA%\Programs\Soda Music`、`%ProgramFiles%\Soda Music` 和 `%ProgramFiles(x86)%\Soda Music` 中完整的安装目录，按版本由新到旧选择。
 - 免安装需要 **x64 Node.js** 和支持读取此 7z 归档的 Windows 系统 `tar.exe`。新版 Windows 11 有相应能力；旧版 Windows 的归档工具可能不支持，此时会提示更新 Windows 的归档工具。下载失败、哈希不符、磁盘权限等问题会单独报告，不清除已有登录。
 - 提取的组件存放在本插件数据目录的 `native-sdk-3.7.0-x64`，校验通过后重复使用；有效缓存无需再次下载。下载的完整安装包和解包临时文件会在完成或取消后删除。并发请求会等待同一次准备完成。
@@ -91,16 +94,21 @@ Windows x64 新增免安装组件准备流程（0.5.1 已发布，Windows 实机
 
 ## 登录、存储与退出
 
-登录流程为插件建立独立设备身份，使用临时浏览器会话加载官方安全 SDK，取码并轮询。手机确认后，辅助程序和 MyGo 插件分别校验账号，成功才保存登录。Windows 实机已完成该流程，原先的 2156 登录问题已通过真实扫码验证解决；Mac 本轮使用已有会话，尚未重验新设备扫码。
-
+登录前仅由 Node.js 准备插件设备。随后 MyGo 创建临时隔离 WebView，加载官方安全 SDK、获取二维码并轮询。二次验证沿用同一次二维码、Cookie 与请求信息，成功回调后接续原请求；插件再通过汽水 API 校验账号，校验成功才保存新会话。失败、超时、关闭窗口都保留原账号。
 - 登录凭据由 MyGo `host.storage` 保存在本机插件数据的 JSON 文件中，不是系统加密凭据库；无需手动提供密码或 Cookie，不应分享该数据文件。
 - 「退出登录」清除此插件的本地账号凭据和内存音乐库缓存，并取消插件正在进行的登录/媒体请求。不会退出手机或官方客户端，也不撤销其登录。
 - 插件自己的匿名设备身份会保留，供下次登录复用。
 - 音频缓存使用 MyGo 提供的插件数据目录：Windows 通常为 `%APPDATA%\MyGo Music\plugin-data\qishui-account\media-cache`，macOS 为 `~/Library/Application Support/MyGo Music/plugin-data/qishui-account/media-cache`。缓存按账号、歌曲和源音质区分；插件会在后续播放时清理较旧文件，目标总量不超过 512 MiB；退出账号不删除已有音频缓存。
-- 登录浏览器使用独立临时资料目录和私有进程管道，不读取日常浏览器资料。正常取码时窗口最小化；汽水要求额外安全验证时，会显示官方验证界面，由用户完成。验证期间保留同一次扫码的浏览器、Cookie 与请求信息；官方成功回调后继续原请求并校验账号，结束后退出并清理临时目录。
-- MyGo 0.1.5 登录弹窗的「取消」只关闭弹窗，插件流程可能继续等待至二维码过期；「退出登录」可终止该流程。若出现 `2046` 且平台提供可用的验证数据，插件会打开同一登录会话中的官方验证界面。完成后继续连接 MyGo，无需重新扫码；关闭验证、超时或平台未提供受支持入口时，会保留失败说明。验证成功后仍被要求验证时会停止本次请求，避免反复取码。
+- 内嵌窗口使用临时会话，不读取系统浏览器或官方客户端的账号。远程页面不能调用 MyGo 的 Go 服务；官方验证需要的弹窗仍由 MyGo 显示，并共用本次临时会话。完成或取消后关闭相关窗口。
+- 关闭 MyGo 的登录对话框会关闭内嵌窗口并结束该流程；「退出登录」仍会清除本插件的原账号。若验证成功后平台再次要求验证，停止本次请求并提示稍后重试，避免循环取码。
 
 ## 验证记录
+
+### 内嵌登录预览 · 2026-11-09
+
+Apple Silicon Mac 使用真实插件入口、原生 WebView 和汽水匿名接口生成二维码，并核对二维码图像确由宿主渲染、扫码设备名存在、远程页面 Go 服务被阻止、验证弹窗留在 MyGo 内。隔离场景覆盖二次验证成功回调后原二维码/trace/portrait 不变、取消时保留旧账号，以及错误二维码来源和票据被拒绝。真实账号文件的校验值前后一致，未扫码或确认真实账号。
+
+129 项插件回归及播放器受影响包检查通过。Windows x64 与 Mac arm64 配套构建成功。Windows 未实机运行；真实账号二次验证仍需人工完成。复现所用 `embeddedqa` Go 构建标签仅用于验证，不进入正常播放器构建。
 
 ### 设备名称与二次验证接续 · 2026-11-09
 

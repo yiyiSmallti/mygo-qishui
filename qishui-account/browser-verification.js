@@ -1,5 +1,5 @@
-// Runs inside the isolated login browser. Challenge contents stay in this
-// browser and the private helper; only completion state is returned to MyGo.
+// Runs inside MyGo's isolated login page. Challenge contents stay in the
+// temporary WebView; only bounded completion state is read by the host.
 (() => {
   const ORIGIN = 'https://api.qishui.com';
   const CAPTCHA = 'https://lf-rc1.yhgfb-cn-static.com/obj/rc-client-security/secsdk-captcha/2.28.11/captcha.js';

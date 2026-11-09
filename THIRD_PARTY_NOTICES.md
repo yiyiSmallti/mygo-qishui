@@ -4,7 +4,7 @@
 
 ## MyGo Music
 
-`patches/mygo-0.1.21-taskbar-player.patch` 与 `patches/mygo-0.1.22-taskbar-player.patch` 分别基于 [egoist/mygo-music v0.1.21](https://github.com/egoist/mygo-music/tree/v0.1.21) 和 [v0.1.22](https://github.com/egoist/mygo-music/tree/v0.1.22)。上游采用 GNU Affero General Public License v3，许可证原文见 [patches/LICENSE-MyGo](patches/LICENSE-MyGo)。补丁中的上游代码及相应修改遵循该许可。应用补丁时应保留上游的版权和许可文件。
+`patches/mygo-0.1.21-taskbar-player.patch` 与 `patches/mygo-0.1.22-taskbar-player.patch` 分别基于 [egoist/mygo-music v0.1.21](https://github.com/egoist/mygo-music/tree/v0.1.21) 和 [v0.1.22](https://github.com/egoist/mygo-music/tree/v0.1.22)。新增 `patches/mygo-0.1.22-embedded-signin.patch` 同样基于 v0.1.22，需在该版本任务栏补丁后应用。上游采用 GNU Affero General Public License v3，许可证原文见 [patches/LICENSE-MyGo](patches/LICENSE-MyGo)。补丁中的上游代码及相应修改遵循该许可。应用补丁时应保留上游的版权和许可文件。
 
 ## 汽水客户端相关代码与图标
 

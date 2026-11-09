@@ -1,11 +1,17 @@
 # MyGo Music 播放器补丁
 
-补丁包含 Windows 任务栏播放条及听歌页面布局改动，配套插件 0.5.0。必须选择与上游标签一致的文件，不适用于任意版本：
+补丁包含 Windows 任务栏播放条、听歌页面布局，以及 0.6.0 预览插件需要的 MyGo 内嵌登录能力。必须选择与上游标签一致的文件，不适用于任意版本：
 
 | 上游版本 | 补丁文件 |
 | --- | --- |
-| **v0.1.22（当前适配）** | `mygo-0.1.22-taskbar-player.patch` |
+| **v0.1.22（当前适配）** | 先 `mygo-0.1.22-taskbar-player.patch`，再 `mygo-0.1.22-embedded-signin.patch` |
 | v0.1.21 | `mygo-0.1.21-taskbar-player.patch` |
+
+## 内嵌登录预览
+
+新增 `host.features.scriptedWebSignIn`、受限本地脚本注入、`untilAny` Cookie 条件和可辨别的关窗／超时结果。脚本必须位于插件目录、对应声明的 HTTPS 来源；远程页面没有 Go 服务权限。二维码由宿主编码，验证弹窗共用临时会话并保留在 MyGo 内。0.6.0 插件必须配套此补丁；旧播放器会收到明确提示。
+
+Mac 原生取码、二维码显示、验证回调接续与取消、窗口关闭、会话保留及错误二维码拒绝已验证；Windows 目前仅交叉编译通过，真实账号验证仍需人工完成。
 
 ## 可见变化
 
@@ -27,13 +33,17 @@
 git clone --branch v0.1.22 --depth 1 https://github.com/egoist/mygo-music.git .verification/mygo-music
 git -C .verification/mygo-music apply --check ../../patches/mygo-0.1.22-taskbar-player.patch
 git -C .verification/mygo-music apply ../../patches/mygo-0.1.22-taskbar-player.patch
+git -C .verification/mygo-music apply --check ../../patches/mygo-0.1.22-embedded-signin.patch
+git -C .verification/mygo-music apply ../../patches/mygo-0.1.22-embedded-signin.patch
 Set-Location .verification/mygo-music
 go test ./internal/...
 go test ./internal/app -run '^TestTaskbar' -count=5
-go tool mygo build -platform windows/amd64 -skip-installer -o build-taskbar
+go tool mygo build -platform windows/amd64 -skip-installer -o build-embedded
 ```
 
 依赖版本以补丁后的 `go.mod` 为准。构建后，先从托盘正常退出 MyGo，备份原程序，再使用构建输出替换程序；不要覆盖账号数据目录。
+
+Mac arm64 可用 `go tool mygo build -platform darwin/arm64 -sign - -skip-dmg -skip-notarize -skip-installer -o build-embedded` 构建本机签名版。Windows 输出需保留 EXE 同目录资源；Mac 需保留完整 `.app`。
 
 这不是 MyGo 官方发行版。自动更新仍然保留，官方更新可能覆盖补丁，届时需重新移植。
 
