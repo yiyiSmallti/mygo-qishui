@@ -244,7 +244,14 @@ async function completeVerification(challenge, device, portrait) {
       if (state?.status === 'success') return state;
       if (state?.status === 'cancelled') throw fail('已关闭汽水安全验证，尚未登录成功。', '2046');
       if (state?.status === 'timeout') throw fail('汽水安全验证已超时，请重新登录。', '2046');
-      if (state?.status === 'unsupported') throw fail('汽水返回的验证入口暂不受支持，尚未登录成功。', '2046');
+      if (state?.status === 'unsupported') {
+        const error = fail('汽水返回的验证入口暂不受支持，尚未登录成功。', '2046');
+        const entry = state.entry;
+        if (entry && ['host', 'scheme', 'credentials', 'port', 'url', 'length'].includes(entry.reason)) {
+          error.verificationEntry = { reason: entry.reason, host: typeof entry.host === 'string' && /^[a-z0-9.-]{1,253}$/.test(entry.host) ? entry.host : '' };
+        }
+        throw error;
+      }
       if (state?.status === 'loadFailed') throw fail('汽水官方验证界面未能加载，请检查网络后重新登录。', '2046');
       await sleep(250);
     }
@@ -384,6 +391,6 @@ async function main() {
 }
 main().catch(async error => {
   if (session && !closing) { try { await cookies(); } catch {} }
-  if (!closing) emit({ type: 'error', stage, code: error.code || 'unknown', description: safeDescription(error.message), status: 'unknown' });
+  if (!closing) emit({ type: 'error', stage, code: error.code || 'unknown', description: safeDescription(error.message), status: 'unknown', ...(error.verificationEntry ? { verificationEntry: error.verificationEntry } : {}) });
   process.exitCode = 1;
 }).finally(async () => { await cleanup(); process.exit(process.exitCode || 0); });

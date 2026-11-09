@@ -4,7 +4,7 @@ const ORIGIN = 'https://api.qishui.com';
 const SESSION = 'qishui-session-v1';
 const DIAGNOSTIC = 'qishui-login-diagnostic-v1';
 const DEVICE = 'qishui-device-v1';
-const VERSION = '0.5.1';
+const VERSION = '0.5.2';
 const UA = {
   windows: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   darwin: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -88,8 +88,12 @@ function platformFailure(result, stage, jar, flow) {
     .replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 160).trim();
   if (!description) description = '平台未提供具体原因';
   const status = ['new', 'scanned', 'confirmed', '1', '2', '3', 'expired'].includes(String(data.status)) ? String(data.status) : 'unknown';
-  host.storage.set(DIAGNOSTIC, { version: VERSION, time: new Date().toISOString(), stage, code, status, description });
-  if (code === '2046') throw failure('汽水要求额外安全验证，尚未登录成功。' + description);
+  const reasons = { host: '域名未列入支持列表', scheme: '需要 HTTPS 地址', credentials: '地址包含账号信息', port: '端口不受支持', url: '地址格式无效', length: '地址过长' };
+  const entry = data.verificationEntry;
+  const verificationEntry = entry && Object.prototype.hasOwnProperty.call(reasons, entry.reason) ? { reason: entry.reason, host: typeof entry.host === 'string' && /^[a-z0-9.-]{1,253}$/.test(entry.host) ? entry.host : '' } : null;
+  host.storage.set(DIAGNOSTIC, { version: VERSION, time: new Date().toISOString(), stage, code, status, description, ...(verificationEntry ? { verificationEntry } : {}) });
+  const entryDescription = verificationEntry ? '（入口域名：' + (verificationEntry.host || '无法解析') + '；原因：' + reasons[verificationEntry.reason] + '）' : '';
+  if (code === '2046') throw failure('汽水要求额外安全验证，尚未登录成功。' + description + entryDescription);
   throw failure(stage + '失败（' + code + '）：' + description + (code === '2156' ? '。手机确认尚未完成电脑端账号连接。' : ''));
 }
 
@@ -283,7 +287,7 @@ export async function signIn() {
       } else if (message.type === 'error') {
         if (message.code === 'setup') throw failure(typeof message.description === 'string' ? message.description.slice(0, 220) : '汽水组件准备失败，请检查网络后重试。', 'setup');
         const stage = ['注册插件设备', '初始化浏览器', '加载官方登录 SDK', '初始化登录设备', '获取二维码', '扫码确认', '校验账号'].includes(message.stage) ? message.stage : '账号登录';
-        platformFailure({ error_code: message.code || 'unknown', data: { description: message.description, status: message.status } }, stage, jar, { token: qrToken });
+        platformFailure({ error_code: message.code || 'unknown', data: { description: message.description, status: message.status, verificationEntry: message.verificationEntry } }, stage, jar, { token: qrToken });
       } else if (message.type === 'complete') {
         if (!qrToken || !Array.isArray(message.cookies) || !message.account || typeof message.account.id !== 'string') throw failure('账号连接结果不完整。');
         for (const cookie of message.cookies) {
