@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -178,6 +179,13 @@ func login(script string, timeout time.Duration, cancelled <-chan struct{}) (str
 	}
 	session := mygo.NewEphemeralSession()
 	win := mygo.NewWindow(mygo.WindowOptions{Title: "登录汽水音乐", URL: origin + "/", Width: 480, Height: 680, MinWidth: 360, MinHeight: 480, Page: mygo.PageOptions{Session: session, PreloadScript: script, Untrusted: true}})
+	if runtime.GOOS == "windows" {
+		// Stock host.spawn supplies STARTF_USESHOWWINDOW/SW_HIDE. Windows
+		// consumes that state on the first ShowWindow call; the next call
+		// explicitly displays the plugin login window.
+		win.Show()
+		win.Show()
+	}
 	defer embeddedSignInPopups(win, session)()
 	defer win.Close()
 	closed := make(chan struct{})
