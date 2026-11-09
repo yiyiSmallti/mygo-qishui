@@ -23,7 +23,7 @@ function deferred() {
 
 async function harness(messages = [], options = {}) {
   const data = new Map(Object.entries(clone(options.saved || {})));
-  const storageWrites = [], prompts = [], fetches = [], spawned = [], inputs = [], webCalls = [], timers = new Map();
+  const storageWrites = [], prompts = [], fetches = [], spawned = [], inputs = [], loginInputs = [], timers = new Map();
   let closed = 0, timerId = 0;
   const helper = {
     write: text => inputs.push(text),
@@ -34,6 +34,14 @@ async function harness(messages = [], options = {}) {
       return typeof value === 'string' || value === null ? value : JSON.stringify(value);
     },
   };
+  const loginHelper = {
+    write: text => { loginInputs.push(JSON.parse(text)); options.onLoginStart?.(); },
+    closeStdin: () => { closed++; options.onClose?.(); },
+    readLine: async () => {
+      const result = options.loginRead ? await options.loginRead() : { cookie: 'sessionid=test-session' };
+      return JSON.stringify(result.error ? { type: 'error', ...result.error } : { type: 'complete', cookie: result.cookie });
+    },
+  };
   const context = createContext({
     URL, AbortController, TypeError,
     setTimeout(fn, delay) { const id = ++timerId; timers.set(id, { fn, delay }); return id; },
@@ -41,11 +49,6 @@ async function harness(messages = [], options = {}) {
     host: {
       platform: options.platform || 'windows', arch: 'amd64',
       dataDir: options.dataDir,
-      features: options.features === undefined ? { scriptedWebSignIn: true } : options.features,
-      webSignIn: options.noWebSignIn ? undefined : async request => {
-        webCalls.push(clone(request));
-        return options.webSignIn ? options.webSignIn(request) : { cookie: 'sessionid=test-session' };
-      },
       storage: {
         get: key => clone(data.get(key)),
         set: (key, value) => { data.set(key, clone(value)); storageWrites.push({ key, value: clone(value) }); },
@@ -54,7 +57,7 @@ async function harness(messages = [], options = {}) {
       spawn: (command, args) => {
         spawned.push({ command, args: clone(args) });
         if (options.spawnError) throw new Error(options.spawnError);
-        return helper;
+        return command.includes("native/") ? loginHelper : helper;
       },
       signInPrompt: prompt => prompts.push(clone(prompt)),
     },
@@ -69,7 +72,7 @@ async function harness(messages = [], options = {}) {
   const module = new SourceTextModule(source, { context });
   await module.link(() => { throw new Error('Plugin must not import modules'); });
   await module.evaluate();
-  return { api: module.namespace, data, storageWrites, prompts, fetches, spawned, inputs, webCalls, timers, get closed() { return closed; } };
+  return { api: module.namespace, data, storageWrites, prompts, fetches, spawned, inputs, loginInputs, timers, get closed() { return closed; } };
 }
 
 test('helper transport uses private JSON lines and validates identity before saving the session', async () => {
@@ -77,7 +80,7 @@ test('helper transport uses private JSON lines and validates identity before sav
   h = await harness([{ type: 'progress', text: '正在准备' }, deviceMessage()], {
     saved: { [DIAGNOSTIC]: { code: '2156' } },
     dataDir: 'C:\\mygo-data',
-    webSignIn: async () => {
+    loginRead: async () => {
       assert.deepEqual(h.data.get(DEVICE), device);
       assert.equal(h.closed, 1);
       return { cookie: 'sessionid=test-session' };
@@ -93,16 +96,16 @@ test('helper transport uses private JSON lines and validates identity before sav
     },
   });
   assert.deepEqual(clone(await h.api.signIn()), account);
-  assert.deepEqual(h.spawned, [{ command: 'node', args: ['./device-helper.cjs'] }]);
+  assert.deepEqual(h.spawned, [{ command: 'node', args: ['./device-helper.cjs'] }, { command: './native/qishui-login.exe', args: [] }]);
   assert.equal(h.inputs.length, 1);
   assert.ok(h.inputs[0].endsWith('\n'));
   assert.deepEqual(JSON.parse(h.inputs[0]), { type: 'start', device: null, dataDir: 'C:\\mygo-data' });
   assert.deepEqual(h.data.get(DEVICE), device);
   assert.deepEqual(h.data.get(SESSION).account, account);
   assert.equal(h.data.has(DIAGNOSTIC), false);
-  assert.deepEqual(h.webCalls, [{ url: 'https://api.qishui.com/', cookiesOf: 'https://api.qishui.com/', untilAny: ['sessionid', 'sessionid_ss'], scriptFiles: ['browser-info.js', 'browser-verification.js', 'embedded-login.js'], scriptData: { device, computerName: 'DESKTOP-QISHUI', osLabel: 'Windows' } }]);
+  assert.deepEqual(h.loginInputs, [{ type: 'start', device, computerName: 'DESKTOP-QISHUI', osLabel: 'Windows', timeoutMs: 240000 }]);
   assert.equal(h.fetches.length, 1);
-  assert.equal(h.closed, 1);
+  assert.equal(h.closed, 2);
   assert.equal(h.timers.size, 0);
 });
 
@@ -116,11 +119,11 @@ test('only the plugin-owned device record is passed to a new login', async () =>
 
 test('unusable embedded credentials are never a login', async () => {
   for (const result of [{ cookie: '' }, { cookie: 'sessionid=value\r\nInjected: bad' }]) {
-    const h = await harness([deviceMessage()], { saved: { [SESSION]: oldSession() }, webSignIn: async () => result });
+    const h = await harness([deviceMessage()], { saved: { [SESSION]: oldSession() }, loginRead: async () => result });
     await assert.rejects(h.api.signIn());
     assert.deepEqual(h.data.get(SESSION), oldSession());
     assert.equal(h.fetches.length, 0);
-    assert.equal(h.closed, 1);
+    assert.equal(h.closed, 2);
   }
 });
 
@@ -130,7 +133,7 @@ test('server identity is authoritative when embedded login succeeds', async () =
   assert.deepEqual(clone(await h.api.signIn()), verified);
   assert.deepEqual(h.data.get(SESSION).account, verified);
   assert.equal(h.fetches.length, 1);
-  assert.equal(h.closed, 1);
+  assert.equal(h.closed, 2);
 });
 
 test('account validation failure never overwrites a saved session', async () => {
@@ -141,11 +144,11 @@ test('account validation failure never overwrites a saved session', async () => 
 
 test('embedded login errors preserve the previous session', async () => {
   for (const code of ['closed', 'timeout', 'load', '2046']) {
-    const h = await harness([deviceMessage()], { saved: { [SESSION]: oldSession() }, webSignIn: async () => ({ error: { code, message: '登录失败' } }) });
+    const h = await harness([deviceMessage()], { saved: { [SESSION]: oldSession() }, loginRead: async () => ({ error: { code, message: '登录失败' } }) });
     await assert.rejects(h.api.signIn());
     assert.deepEqual(h.data.get(SESSION), oldSession());
     assert.equal(h.fetches.length, 0);
-    assert.equal(h.closed, 1);
+    assert.equal(h.closed, 2);
   }
 });
 
@@ -208,13 +211,9 @@ test('bridge timeout closes input and prevents indefinite waiting', async () => 
 });
 
 test('unsupported platform and denied process permission do not start network requests', async () => {
-  for (const options of [{ features: {} }, { features: { scriptedWebSignIn: false } }, { noWebSignIn: true }]) {
-    const unsupported = await harness([], { ...options, saved: { [SESSION]: oldSession() } });
-    await assert.rejects(unsupported.api.signIn(), error => error.code === 'setup');
-    assert.deepEqual(unsupported.data.get(SESSION), oldSession());
-    assert.equal(unsupported.spawned.length, 0);
-    assert.equal(unsupported.fetches.length, 0);
-  }
+  const stock = await harness([deviceMessage()]);
+  assert.deepEqual(clone(await stock.api.signIn()), account);
+  assert.equal(stock.spawned.length, 2);
   const other = await harness([], { platform: 'linux' });
   await assert.rejects(other.api.signIn(), /仅适配 Windows 和 macOS/);
   assert.equal(other.spawned.length, 0);

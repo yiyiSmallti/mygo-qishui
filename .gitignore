@@ -31,3 +31,6 @@ backup*/
 *.tmp
 .DS_Store
 Thumbs.db
+
+# Platform-specific login binaries are generated, never committed.
+qishui-account/native/

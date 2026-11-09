@@ -1,0 +1,32 @@
+package main
+
+import (
+ "crypto/sha256"
+ "encoding/json"
+ "fmt"
+ "os"
+ "path/filepath"
+ "mygo-music/internal/plugin"
+)
+func main(){
+ report:=map[string]any{"ok":false,"stockPlayer":"v0.1.22","hostPatchApplied":false};code:=1
+ defer func(){data,_:=json.MarshalIndent(report,"","  ");os.WriteFile(os.Getenv("MYGO_STOCK_QA_RESULT"),append(data,'\n'),0600);fmt.Println(string(data));os.Exit(code)}()
+ err:=func()error{
+  original:=os.Getenv("MYGO_QA_STORAGE");before,err:=os.ReadFile(original);if err!=nil{return err}
+  var selected struct{Device json.RawMessage `json:"qishui-device-v1"`};if json.Unmarshal(before,&selected)!=nil||len(selected.Device)==0{return fmt.Errorf("missing test device")}
+  temporary,err:=os.MkdirTemp("","mygo-stock-signin-");if err!=nil{return err};defer os.RemoveAll(temporary)
+  data:=filepath.Join(temporary,"qishui-account");os.MkdirAll(data,0700)
+  seed,_:=json.Marshal(map[string]any{"qishui-device-v1":selected.Device,"qishui-session-v1":map[string]any{"qaPreviousSession":true}});os.WriteFile(filepath.Join(data,"storage.json"),seed,0600)
+  p,err:=plugin.Load(os.Getenv("MYGO_QA_PLUGIN_DIR"),temporary);if err!=nil{return err};defer p.Close();if err=p.Grant(true);err!=nil{return err}
+  _,err=p.SignIn();if err==nil{return fmt.Errorf("QA cancellation unexpectedly logged in")}
+  var stored map[string]json.RawMessage;contents,_:=os.ReadFile(filepath.Join(data,"storage.json"));json.Unmarshal(contents,&stored)
+  var diagnostic struct{Code string};json.Unmarshal(stored["qishui-login-diagnostic-v1"],&diagnostic)
+  mode:=os.Getenv("MYGO_NATIVE_QA_MODE");expected:="closed";if mode=="qr-origin"||mode=="qr-token"{expected="qr"};if mode=="mfa-cancel"{expected="cancelled"};if mode=="unsafe-error"{expected="page"}
+  if diagnostic.Code!=expected{return fmt.Errorf("wrong diagnostic code %s; %v",diagnostic.Code,err)}
+  var session map[string]any;json.Unmarshal(stored["qishui-session-v1"],&session);if session["qaPreviousSession"]!=true{return fmt.Errorf("previous session changed")}
+  after,_:=os.ReadFile(original);if sha256.Sum256(before)!=sha256.Sum256(after){return fmt.Errorf("real account storage changed")}
+  var native map[string]any;receipt,err:=os.ReadFile(os.Getenv("MYGO_NATIVE_QA_RESULT"));if err!=nil{return err};json.Unmarshal(receipt,&native);if native["ok"]!=true{return fmt.Errorf("native QA did not pass")}
+  report["previousSessionPreserved"]=true;report["realAccountStorageUnchanged"]=true;report["native"]=native;return nil
+ }()
+ if err!=nil{report["error"]=err.Error()}else{report["ok"]=true;code=0}
+}

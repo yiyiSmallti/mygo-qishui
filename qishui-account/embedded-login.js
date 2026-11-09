@@ -1,4 +1,4 @@
-// MyGo's isolated embedded page owns this login from QR through official MFA.
+// The plugin-owned isolated embedded page owns this login from QR through official MFA.
 // It cannot invoke application Go services; the host reads a bounded state.
 (() => {
   if (location.origin !== 'https://api.qishui.com') return;
@@ -68,7 +68,7 @@
     const challenge = challengeFor(value);
     if (!challenge) return checked(value);
     state.status = 'verifying'; qrSection.hidden = true;
-    status('请在 MyGo 当前窗口完成官方安全验证，完成前请勿关闭。');
+    status('请在当前登录窗口完成官方安全验证，完成前请勿关闭。');
     const verificationBegan = Date.now();
     window.__mygoVerify({ ...challenge, device, portrait: flow.portrait });
     const deadline = Date.now() + 185000;
@@ -99,7 +99,7 @@
     throw fail('安全验证已超时，请重新登录。', 'timeout');
   }
   function buildPage() {
-    document.title = '汽水音乐 · MyGo 内嵌登录';
+    document.title = '汽水音乐 · 插件登录';
     const style = document.createElement('style');
     style.textContent = `:root{color-scheme:light dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body{margin:0;background:light-dark(#fff,#181818);color:light-dark(#171717,#eee)}main{box-sizing:border-box;width:100%;max-width:460px;margin:auto;padding:32px 24px;text-align:center}h1{font-size:22px;margin:0 0 12px}p{font-size:14px;line-height:1.6}#qr-section{margin:22px 0}#login-qr{display:block;max-width:100%;width:264px;height:264px;object-fit:contain;margin:0 auto;background:white;border-radius:12px}#login-qr:not([src]){visibility:hidden}.hint{font-size:12px;opacity:.7}[hidden]{display:none!important}`;
     document.head.appendChild(style);
@@ -108,7 +108,7 @@
     statusNode = document.createElement('p'); statusNode.id = 'login-status'; statusNode.textContent = state.message;
     qrSection = document.createElement('section'); qrSection.id = 'qr-section';
     qrImage = document.createElement('img'); qrImage.id = 'login-qr'; qrImage.alt = '请用汽水音乐 App 扫码'; qrSection.appendChild(qrImage);
-    const hint = document.createElement('p'); hint.className = 'hint'; hint.textContent = '全部验证在 MyGo 内完成。登录完成前请保留此窗口；成功后会自动关闭。';
+    const hint = document.createElement('p'); hint.className = 'hint'; hint.textContent = '全部验证在插件的登录窗口中完成。登录完成前请保留此窗口；成功后会自动关闭。';
     main.append(title, statusNode, qrSection, hint); document.body.replaceChildren(main);
     window.__mygoSetQRCode = (url, png) => { if (url !== state.qr || typeof png !== 'string' || !png.startsWith('data:image/png;base64,')) return false; qrImage.src = png; return true; };
   }
@@ -138,7 +138,7 @@
     const data = created.data || {};
     if (typeof data.token !== 'string' || !data.token || typeof data.qrcode_index_url !== 'string') throw fail('汽水未返回有效二维码。');
     let original; try { original = new URL(data.qrcode_index_url); } catch { throw fail('汽水二维码地址无效。'); }
-    if (original.protocol !== 'https:' || original.hostname !== 'bff-pc.qishui.com' || original.username || original.password || original.searchParams.getAll('token').length !== 1 || original.searchParams.get('token') !== data.token) throw fail('二维码来源或会话不符合预期。');
+    if (original.protocol !== 'https:' || original.hostname !== 'bff-pc.qishui.com' || original.username || original.password || original.searchParams.getAll('token').length !== 1 || original.searchParams.get('token') !== data.token) throw fail('二维码来源或会话不符合预期。', 'qr');
     const qr = new URL('https://bff-pc.qishui.com/light/invoke/scan_login');
     qr.searchParams.set('token', data.token); qr.searchParams.set('os', config.osLabel); qr.searchParams.set('computer_name', config.computerName);
     state.qr = qr.href;
