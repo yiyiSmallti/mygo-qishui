@@ -1,6 +1,6 @@
 # MyGo × 汽水音乐
 
-适配 Windows 与 macOS 的 MyGo 汽水音乐插件，以及 Windows 任务栏播放条和听歌页面布局补丁。当前插件 **0.5.0**，播放器补丁支持 **MyGo Music v0.1.22**，同时保留 v0.1.21 对应补丁。
+适配 Windows 与 macOS 的 MyGo 汽水音乐插件，以及 Windows 任务栏播放条和听歌页面布局补丁。当前插件 **0.5.1**，播放器补丁支持 **MyGo Music v0.1.22**，同时保留 v0.1.21 对应补丁。
 
 这是独立开发的适配项目，不是 MyGo 或汽水音乐的官方发行版。
 
@@ -9,7 +9,7 @@
 | 平台 | 当前验证范围 | 安装方式 |
 | --- | --- | --- |
 | Windows x64 | 扫码登录、音乐库、搜索、播放，以及配套任务栏补丁 | Release 插件包或源码目录 |
-| macOS · Apple Silicon | 已有会话的账号读取、喜欢列表、搜索、完整音频下载与转换，以及 MyGo 窗口内播放 | 最新 `main` 的 `qishui-account` 源码目录 |
+| macOS · Apple Silicon | 已有会话的账号读取、喜欢列表、搜索、完整音频下载与转换，以及 MyGo 窗口内播放 | Release 的 `plugin-darwin-arm64.zip` 或源码目录 |
 | macOS · Intel | 已有架构目录查找逻辑，尚未实机验证 | 暂无已验证的安装说明 |
 
 透明任务栏播放条、拖动吸附和任务栏逐字歌词仅适用于 Windows。macOS 的新设备扫码流程尚未完成本轮实机验证；Linux 暂不支持。Node.js、浏览器和 FFmpeg 需自行安装；Windows x64 新增从官方安装包自动提取汽水组件的免安装流程，尚待 Windows 实机验证。详见 [本机依赖](qishui-account/README.md#本机依赖)。
@@ -89,15 +89,15 @@
 
 ## 安装与使用
 
-**本轮免安装修复尚未包含在现有 Release 中**：请使用包含 `native-sdk.cjs` 的源码目录或本地构建 ZIP，并通过「从本机安装」重新加载插件。现有 Release 的依赖仍需按原配置准备。
+**0.5.1 已包含本轮修复**：Node.js 路径设置、Windows 免安装汽水组件、系统设备名、二次验证接续及 Mac 播放适配均随插件包发布。升级后请重新加载插件；使用本机 ZIP 安装的用户继续从本机升级。
 
-**Windows x64 从 GitHub 安装**：先阅读 [本机依赖说明](qishui-account/README.md#本机依赖)，再在 MyGo「设置 → 插件 → ＋ → 从 GitHub 安装」输入 `yiyiSmallti/mygo-qishui`。MyGo 会从 [最新 Release](https://github.com/yiyiSmallti/mygo-qishui/releases/latest) 获取 `plugin-windows-amd64.zip`；也可下载该 ZIP 从本机安装。发布包的根目录包含 `plugin.json`，只包含插件文件，不包含主程序补丁、账号数据或第三方运行组件。当前发布包仅用于 Windows x64。
+**Windows x64 从 GitHub 安装**：先阅读 [本机依赖说明](qishui-account/README.md#本机依赖)，再在 MyGo「设置 → 插件 → ＋ → 从 GitHub 安装」输入 `yiyiSmallti/mygo-qishui`。MyGo 会从 [最新 Release](https://github.com/yiyiSmallti/mygo-qishui/releases/latest) 获取 `plugin-windows-amd64.zip`；也可下载该 ZIP 从本机安装。发布包的根目录包含 `plugin.json`，只包含插件文件，不包含主程序补丁、账号数据或第三方运行组件。Windows x64 对应 `plugin-windows-amd64.zip`；Apple Silicon Mac 对应 `plugin-darwin-arm64.zip`。
 
-**macOS 安装**：先准备 Node.js 24 或更新版本、FFmpeg、Chrome／Edge／Chromium 和汽水音乐 3.7.0 官方客户端，再下载或拉取本仓库最新 `main` 源码。解压后，在 MyGo「设置 → 插件 → ＋ → 从本机安装」选择其中的 **`qishui-account` 子目录**。具体路径与依赖见 [macOS 依赖说明](qishui-account/README.md#macosapple-silicon-已验证)。Mac 播放修复已在 `main` 中；现有 Windows Release 包不代表已发布该修复。
+**macOS 安装**：先准备 Node.js 24 或更新版本、FFmpeg、Chrome／Edge／Chromium 和汽水音乐 3.7.0 官方客户端，Apple Silicon 可在 MyGo「设置 → 插件 → ＋ → 从 GitHub 安装」输入同一仓库地址，或下载 `plugin-darwin-arm64.zip` 后解压并从本机安装。源码安装则选择仓库中的 **`qishui-account` 子目录**。具体路径与依赖见 [macOS 依赖说明](qishui-account/README.md#macosapple-silicon-已验证)。Mac 免安装汽水组件尚未提供，仍需上述官方客户端依赖。
 
 **Node.js 安装在其他位置时**：Windows 优先从 `PATH` 查找 `node`，再尝试标准安装目录；macOS 保留 Homebrew／Node.js 常见目录查找。两端均可在汽水插件设置中的「Node.js 路径」填写完整可执行文件路径，留空自动查找。路径含空格时也无需加引号。
 
-**扫码设备名与二次验证**：手机确认页使用系统当前的电脑名称；平台要求额外安全验证时，插件显示官方验证窗口，完成后继续同一次扫码登录。此修复尚未包含在现有 Release 中，真实账号验证仍需在目标机器上完成。
+**扫码设备名与二次验证**：手机确认页使用系统当前的电脑名称；平台要求额外安全验证时，插件显示官方验证窗口，完成后继续同一次扫码登录。0.5.1 已包含此流程，真实账号的额外验证仍需在目标机器上完成。
 
 仓库还包含播放器补丁和测试，因此请勿将 GitHub 的 **Code → Download ZIP** 整包当作插件安装。已有本机安装的同名插件若被提示来源不同，可继续使用下载的发布 ZIP 从本机升级，保留原安装来源。
 
@@ -113,7 +113,7 @@
 
 [MyGo 官方发布说明](https://github.com/egoist/mygo-music#publishing-a-plugin) 使用 GitHub Topic `mygo-music-plugin` 发现公开仓库；[官网插件页](https://cloudmusic.egoist.dev/plugins/) 的结果取决于 GitHub 搜索索引和页面缓存，并不代表官方认证。
 
-在 Windows PowerShell 运行 `./scripts/package-plugin.ps1` 可生成 `dist/plugin-windows-amd64.zip` 与 `dist/SHA256SUMS`。脚本只打包 Git 追踪的 `qishui-account/` 文件，将它们放在 ZIP 根目录。发布新正式 Release 时上传这两个文件，MyGo 才能从仓库地址正确安装和更新。
+在 Windows PowerShell 运行 `./scripts/package-plugin.ps1` 可生成 `dist/plugin-windows-amd64.zip`、`dist/plugin-darwin-arm64.zip` 与 `dist/SHA256SUMS`。脚本只打包 Git 追踪的 `qishui-account/` 文件，将它们放在 ZIP 根目录。两个平台包包含相同的 JavaScript 与素材，由运行时选择本机组件。发布新正式 Release 时上传这三个文件，MyGo 才能从仓库地址正确安装和更新。
 
 ## 当前限制
 

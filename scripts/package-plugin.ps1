@@ -24,6 +24,9 @@ try {
     if (-not $check.GetEntry('plugin.json') -or -not $check.GetEntry($manifest.main)) { throw 'Missing plugin entry at archive root.' }
     if ($check.Entries.Count -ne $files.Count) { throw 'Archive file count mismatch.' }
 } finally { $check.Dispose() }
+$macArchivePath = Join-Path $outputPath 'plugin-darwin-arm64.zip'
+# Helpers select platform dependencies at runtime; both packages contain the same sources.
+Copy-Item -LiteralPath $archivePath -Destination $macArchivePath -Force
 $digest = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
-[IO.File]::WriteAllText((Join-Path $outputPath 'SHA256SUMS'), "$digest  plugin-windows-amd64.zip`n", [Text.UTF8Encoding]::new($false))
-[PSCustomObject]@{Version=$manifest.version; Files=$files.Count; Archive=$archivePath; SHA256=$digest} | ConvertTo-Json -Compress
+[IO.File]::WriteAllText((Join-Path $outputPath 'SHA256SUMS'), "$digest  plugin-windows-amd64.zip`n$digest  plugin-darwin-arm64.zip`n", [Text.UTF8Encoding]::new($false))
+[PSCustomObject]@{Version=$manifest.version; Files=$files.Count; Archive=$archivePath; MacArchive=$macArchivePath; SHA256=$digest} | ConvertTo-Json -Compress

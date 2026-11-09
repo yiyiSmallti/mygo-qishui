@@ -1,8 +1,8 @@
 # 汽水音乐 · MyGo 插件
 
-0.5.0，适配 Windows 与 macOS 上的 MyGo Music，已接入账号资料、音乐库、搜索、歌词、推荐和连续听歌。Windows 已完成真实扫码登录；macOS Apple Silicon 已验证已有会话下的读取、搜索与播放，新设备扫码尚未完成本轮实机验证。这是独立开发的 MyGo 插件；配套主程序补丁支持 0.1.22 和 0.1.21，任务栏功能仅适用于 Windows。
+0.5.1，适配 Windows 与 macOS 上的 MyGo Music，已接入账号资料、音乐库、搜索、歌词、推荐和连续听歌。Windows 已完成真实扫码登录；macOS Apple Silicon 已验证已有会话下的读取、搜索与播放，新设备扫码尚未完成本轮实机验证。这是独立开发的 MyGo 插件；配套主程序补丁支持 0.1.22 和 0.1.21，任务栏功能仅适用于 Windows。
 
-最新 `main` 包含 Mac 依赖查找、插件数据目录缓存及播放平台参数修复。Intel Mac 尚未实机验证；Linux 暂不支持。
+0.5.1 包含 Mac 依赖查找、插件数据目录缓存及播放平台参数修复，新增 Node.js 路径设置、Windows 免安装组件、系统扫码设备名和官方二次验证接续。Intel Mac 尚未实机验证；Linux 暂不支持。
 
 0.5.0 按参考界面重新整理「听歌模式」：常用模式采用小图标横卡，探索电台采用封面、标题与简介叠放的宽卡，剩余场景保留在「更多听歌模式」。小图标使用独立 `iconUrl` 字段并随主题着色；原有 `imageUrl` 彩底封面保留，未使用新布局的播放器仍能正常显示封面。配套 MyGo 补丁增加任务栏大字逐字歌词、左右拖拽停靠和关闭按钮。
 
@@ -33,7 +33,7 @@
 
 先确认下文的本机依赖。Windows x64 可在 MyGo「设置 → 插件 → ＋ → 从 GitHub 安装」输入 `yiyiSmallti/mygo-qishui`，由程序下载正式 Release 的插件 ZIP。也可从 [发布页](https://github.com/yiyiSmallti/mygo-qishui/releases/latest) 下载 `plugin-windows-amd64.zip`，选择从本机安装。不要将仓库完整源码 ZIP 直接当作插件；同名插件若因安装来源不同无法覆盖，请继续使用本机 ZIP 升级。
 
-**macOS 使用最新 `main` 源码目录安装**：下载或拉取仓库后，选择其中的 `qishui-account` 文件夹，按以下步骤加载。Mac 修复已提交到 `main`；Windows Release 包不代表已包含该修复。
+**Apple Silicon macOS**：可从同一 GitHub 仓库安装，由 MyGo 选择 `plugin-darwin-arm64.zip`；也可从发布页下载后解压并从本机安装。源码安装选择仓库中的 `qishui-account` 文件夹。Mac 仍需下文的官方客户端本机组件。
 
 1. 在 MyGo「设置 → 插件 → ＋ → 从本机安装」选择此插件文件夹；ZIP 请先解压。升级也使用此入口重新加载，不能只替换文件再开关启用按钮。
 2. 启用「汽水音乐」，允许运行程序，然后切换到此音源。
@@ -74,7 +74,7 @@ macOS 自动识别上述位置，不需要填写 Windows 路径。Node.js 安装
 
 ### Windows x64
 
-Windows x64 新增免安装组件准备流程（本轮源码／本地构建包已实现，现有 Release 尚未包含，Windows 实机仍待验证）：
+Windows x64 新增免安装组件准备流程（0.5.1 已发布，Windows 实机仍待验证）：
 
 - Node.js 24 或更新版本：优先使用 `PATH` 中的 `node`，找不到时再尝试 `C:\Program Files\nodejs\node.exe`；也可在插件设置中指定完整路径。
 - 登录浏览器：优先使用 `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`；也支持标准安装目录中的 Edge 或 Chrome。本机另有 `C:\Program Files\Google\Chrome\Application\chrome.exe`。
