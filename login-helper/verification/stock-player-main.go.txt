@@ -21,7 +21,7 @@ func main(){
   _,err=p.SignIn();if err==nil{return fmt.Errorf("QA cancellation unexpectedly logged in")}
   var stored map[string]json.RawMessage;contents,_:=os.ReadFile(filepath.Join(data,"storage.json"));json.Unmarshal(contents,&stored)
   var diagnostic struct{Code string};json.Unmarshal(stored["qishui-login-diagnostic-v1"],&diagnostic)
-  mode:=os.Getenv("MYGO_NATIVE_QA_MODE");expected:="closed";if mode=="qr-origin"||mode=="qr-token"{expected="qr"};if mode=="mfa-cancel"{expected="cancelled"};if mode=="unsafe-error"{expected="page"}
+  mode:=os.Getenv("MYGO_NATIVE_QA_MODE");expected:="closed";if mode=="qr-origin"||mode=="qr-token"{expected="qr"};if mode=="mfa-cancel"{expected="cancelled"};if mode=="unsafe-error"{expected="page"};if mode=="navigation-failure"{expected="load"}
   if diagnostic.Code!=expected{return fmt.Errorf("wrong diagnostic code %s; %v",diagnostic.Code,err)}
   var session map[string]any;json.Unmarshal(stored["qishui-session-v1"],&session);if session["qaPreviousSession"]!=true{return fmt.Errorf("previous session changed")}
   after,_:=os.ReadFile(original);if sha256.Sum256(before)!=sha256.Sum256(after){return fmt.Errorf("real account storage changed")}

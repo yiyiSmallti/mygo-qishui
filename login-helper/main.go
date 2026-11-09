@@ -19,6 +19,10 @@ import (
 
 const origin = "https://api.qishui.com"
 
+// The API root returns HTTP 404. WebView2 treats that navigation as failed,
+// so serve a local document at the same origin instead of requesting it.
+const bootstrapHTML = "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"mygo-qishui-bootstrap\" content=\"1\"></head><body></body></html>"
+
 type device struct {
 	Schema                  int
 	Aid                     int
@@ -178,7 +182,11 @@ func login(script string, timeout time.Duration, cancelled <-chan struct{}) (str
 		return "", problem("setup", "系统无法显示登录窗口。Windows 请安装 WebView2 Runtime 后重试。")
 	}
 	session := mygo.NewEphemeralSession()
-	win := mygo.NewWindow(mygo.WindowOptions{Title: "登录汽水音乐", URL: origin + "/", Width: 480, Height: 680, MinWidth: 360, MinHeight: 480, Page: mygo.PageOptions{Session: session, PreloadScript: script, Untrusted: true}})
+	initialURL := origin + "/"
+	if runtime.GOOS == "windows" {
+		initialURL = ""
+	}
+	win := mygo.NewWindow(mygo.WindowOptions{Title: "登录汽水音乐", URL: initialURL, Width: 480, Height: 680, MinWidth: 360, MinHeight: 480, Page: mygo.PageOptions{Session: session, PreloadScript: script, Untrusted: true}})
 	if runtime.GOOS == "windows" {
 		// Stock host.spawn supplies STARTF_USESHOWWINDOW/SW_HIDE. Windows
 		// consumes that state on the first ShowWindow call; the next call
@@ -197,6 +205,9 @@ func login(script string, timeout time.Duration, cancelled <-chan struct{}) (str
 		default:
 		}
 	})
+	if runtime.GOOS == "windows" {
+		win.Page().LoadHTML(bootstrapHTML, origin+"/")
+	}
 	if observePage != nil {
 		go observePage(win)
 	}

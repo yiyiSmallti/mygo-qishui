@@ -7,6 +7,7 @@ import (
 	"github.com/egoist/mygo"
 	"net/url"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -68,9 +69,18 @@ return r}})();`
 				}
 				save("mfa", mfa)
 			}
+			sameOrigin, _ := win.Page().Eval("location.origin==='https://api.qishui.com'&&location.href==='https://api.qishui.com/'")
+			marker, _ := win.Page().Eval("document.querySelector('meta[name=mygo-qishui-bootstrap]')?.content==='1'")
+			save("hostDocumentSameOrigin", sameOrigin == true)
+			save("localBootstrap", marker == true)
+			save("bootstrapMatchesPlatform", sameOrigin == true && (runtime.GOOS != "windows" || marker == true))
 			save("realAnonymousQR", true)
 			save("deviceNamePresent", true)
 			save("qrImageRenderedByHelper", true)
+			if mode == "navigation-failure" {
+				win.Page().LoadURL("https://example.invalid/")
+				return
+			}
 			if mode == "unsafe-error" {
 				win.Page().Eval("window.__mygoLoginState={status:'error',code:'private-ticket-123',message:'https://example.invalid/?token=qa-private-token'}")
 				return
@@ -114,10 +124,13 @@ return r}})();`
 		if mode == "unsafe-error" {
 			expected = "page"
 		}
+		if mode == "navigation-failure" {
+			expected = "load"
+		}
 		e, known := err.(*signInError)
 		ok := known && e.Code == expected
-		if mode == "" || mode == "mfa-success" {
-			ok = ok && flags["qrImageRenderedByHelper"] == true && flags["remoteGoBridgeBlocked"] == true && flags["verificationPopupEmbedded"] == true
+		if mode == "" || mode == "mfa-success" || mode == "bootstrap" {
+			ok = ok && flags["qrImageRenderedByHelper"] == true && flags["remoteGoBridgeBlocked"] == true && flags["verificationPopupEmbedded"] == true && flags["bootstrapMatchesPlatform"] == true
 		}
 		if mode == "unsafe-error" {
 			ok = ok && !strings.Contains(e.Message, "qa-private-token") && !strings.Contains(e.Message, "https://")
