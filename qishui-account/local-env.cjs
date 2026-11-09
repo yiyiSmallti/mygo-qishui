@@ -1,12 +1,10 @@
 'use strict';
 
-// Locates the local components the helpers rely on. Windows keeps the paths
-// verified on the original machine; macOS uses standard app/Homebrew locations.
+// Locates complete installed components or the plugin-owned extracted SDK.
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-
-const SODA_VERSION = '3.7.0';
+const { execFileSync } = require('node:child_process');
 
 function firstExisting(candidates) {
   return candidates.find(candidate => candidate && fs.existsSync(candidate)) || '';
@@ -21,18 +19,35 @@ function macApplications(name) {
  * holding device.node / bdms.node. The macOS app ships per-architecture
  * unpacked folders, so the one matching this Node process is chosen.
  */
+function componentsAt(resources, names = ['app.asar.unpacked']) {
+  if (!resources) return null;
+  const asar = path.join(resources, 'app.asar');
+  const unpacked = names.map(name => path.join(resources, name)).find(dir =>
+    ['device.node', 'bdms.node', ...(process.platform === 'win32' ? ['metasecml.dll'] : [])]
+      .every(name => fs.existsSync(path.join(dir, name))));
+  return unpacked && fs.existsSync(asar) ? { asar, unpacked } : null;
+}
 function sodaComponents() {
+  if (process.env.MYGO_QISHUI_SDK_DIR) return componentsAt(path.join(process.env.MYGO_QISHUI_SDK_DIR, 'resources'));
   if (process.platform === 'darwin') {
-    const resources = firstExisting(macApplications('汽水音乐.app').map(app => path.join(app, 'Contents', 'Resources')));
-    if (!resources) return null;
-    const unpacked = firstExisting(['app-' + process.arch + '.asar.unpacked', 'app.asar.unpacked'].map(name => path.join(resources, name)));
-    return unpacked ? { asar: path.join(resources, 'app.asar'), unpacked } : null;
+    for (const app of macApplications('汽水音乐.app')) {
+      const found = componentsAt(path.join(app, 'Contents', 'Resources'), ['app-' + process.arch + '.asar.unpacked', 'app.asar.unpacked']);
+      if (found) return found;
+    }
   }
   if (process.platform === 'win32') {
-    const roots = ['D:/Users/22589/AppData/Local/Programs/Soda Music',
-      process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs', 'Soda Music')];
-    const resources = firstExisting(roots.map(root => root && path.join(root, SODA_VERSION, 'resources')));
-    return resources ? { asar: path.join(resources, 'app.asar'), unpacked: path.join(resources, 'app.asar.unpacked') } : null;
+    const roots = [process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs', 'Soda Music'),
+      process.env.ProgramFiles && path.join(process.env.ProgramFiles, 'Soda Music'),
+      process.env['ProgramFiles(x86)'] && path.join(process.env['ProgramFiles(x86)'], 'Soda Music')].filter(Boolean);
+    for (const root of roots) {
+      let versions = [];
+      try { versions = fs.readdirSync(root).filter(name => /^\d+\.\d+\.\d+$/.test(name))
+        .sort((a, b) => b.localeCompare(a, 'en', { numeric: true })); } catch (error) { if (!['ENOENT', 'ENOTDIR'].includes(error.code)) throw error; }
+      for (const dir of [root, ...versions.map(version => path.join(root, version))]) {
+        const found = componentsAt(path.join(dir, 'resources'));
+        if (found) return found;
+      }
+    }
   }
   return null;
 }
@@ -44,7 +59,7 @@ function sodaAddon(name) {
 
 function ffmpegPath() {
   if (process.platform === 'darwin') return firstExisting(['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg']);
-  return 'C:/Users/22589/AppData/Local/Programs/Python/Python311/Lib/site-packages/imageio_ffmpeg/binaries/ffmpeg-win-x86_64-v7.1.exe';
+  return firstExisting((process.env.PATH || '').split(path.delimiter).filter(Boolean).map(dir => path.join(dir.replace(/^"(.*)"$/, '$1'), 'ffmpeg.exe')));
 }
 
 function browserPath() {
@@ -82,4 +97,18 @@ function scanLabel() {
   return process.platform === 'darwin' ? 'Mac' : 'Windows';
 }
 
-module.exports = { sodaComponents, sodaAddon, ffmpegPath, browserPath, scanLabel, osVersion };
+// ComputerName is the user-visible macOS name; os.hostname() may instead
+// report its .local network host name. Windows hostname is its computer name.
+function deviceName() {
+  let value;
+  try {
+    value = process.platform === 'darwin'
+      ? execFileSync('/usr/sbin/scutil', ['--get', 'ComputerName'], { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] })
+      : os.hostname();
+  } catch { throw Object.assign(new Error('无法读取系统设备名称，请检查系统的电脑名称设置。'), { code: 'setup' }); }
+  const name = value.trim();
+  if (!name || name.length > 255 || /[\u0000-\u001f\u007f]/.test(name)) throw Object.assign(new Error('系统设备名称为空或包含无效字符，请在系统设置中检查。'), { code: 'setup' });
+  return name;
+}
+
+module.exports = { sodaComponents, sodaAddon, ffmpegPath, browserPath, scanLabel, deviceName, osVersion };

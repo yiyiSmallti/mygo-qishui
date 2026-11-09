@@ -156,20 +156,22 @@ test('gateway discards native stdout and validates private result envelopes', as
   worker.stdin = new PassThrough(); worker.stdout = new PassThrough(); worker.kill = () => {};
   const timers = [];
   const context = vm.createContext({
-    __dirname: '.',
+    __dirname: '.', AbortController,
     process: { stdin: input, stdout: { write: text => output.push(text) }, execPath: 'node', exit() {}, exitCode: 0 },
     setTimeout(fn, delay) { const timer = { fn, delay, unref() {} }; timers.push(timer); return timer; }, clearTimeout() {},
-    require: name => name === 'node:child_process' ? { spawn: () => worker } : require(name),
+    require: name => name === 'node:child_process' ? { spawn: () => worker }
+      : name === './native-sdk.cjs' ? { prepareSdk: async () => {} } : require(name),
   });
   new vm.Script(gatewaySource).runInContext(context);
   input.write('{"operation":"lyrics"}\n');
+  await new Promise(resolve => setImmediate(resolve));
   worker.stdout.write('native internal diagnostic\n');
   worker.stdout.write('MYGO_MEDIA_RESULT:null\n');
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(output.length, 1);
-  const result = JSON.parse(output[0]);
+  assert.equal(output.length, 2);
+  const result = JSON.parse(output[1]);
   assert.equal(result.ok, false); assert.equal(result.code, 'unavailable');
-  assert.equal(output[0].includes('native internal'), false);
+  assert.equal(output.join('').includes('native internal'), false);
   assert.equal(context.process.exitCode, 1);
   input.end(); worker.stdout.end(); worker.stdin.end();
 });

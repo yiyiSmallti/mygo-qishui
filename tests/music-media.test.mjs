@@ -70,7 +70,7 @@ test('stream returns only a validated local FLAC cache and passes credentials ov
   const value = streamValue();
   const h = await harness([ok(value)]);
   assert.deepEqual(clone(await h.api.stream({ id: TRACK, quality: 'high' })), value);
-  assert.deepEqual(h.spawned, [{ command: String.raw`C:\Program Files\nodejs\node.exe`, args: ['./media-helper.cjs'] }]);
+  assert.deepEqual(h.spawned, [{ command: 'node', args: ['./media-helper.cjs'] }]);
   assert.equal(h.inputs.length, 1);
   assert.ok(h.inputs[0].endsWith('\n'));
   const input = JSON.parse(h.inputs[0]);

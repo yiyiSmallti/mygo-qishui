@@ -12,17 +12,31 @@ const UA = {
 // Node.js runs the helpers. MyGo started from Finder/Dock has no shell PATH,
 // so macOS tries the Homebrew and nodejs.org locations before a bare name.
 const NODE = {
-  windows: ['C:\\Program Files\\nodejs\\node.exe'],
+  windows: ['node', 'C:\\Program Files\\nodejs\\node.exe'],
   darwin: ['/opt/homebrew/bin/node', '/usr/local/bin/node', 'node'],
 };
 const supportedPlatform = () => typeof host !== 'undefined' && host && Object.prototype.hasOwnProperty.call(NODE, host.platform);
 
+function missingNodeExecutable(error) {
+  if (error && ['ENOENT', 'ENOTDIR'].includes(error.code)) return true;
+  // Go's host.spawn exposes OS start errors as messages, localized on Windows.
+  const message = error && typeof error.message === 'string' ? error.message : '';
+  return /executable file not found|no such file or directory|the system cannot find the (?:file|path) specified|系统找不到指定的(?:文件|路径)/i.test(message);
+}
+
 function spawnHelper(script) {
-  let lastError;
-  for (const command of NODE[host.platform] || []) {
-    try { return host.spawn(command, [script]); } catch (error) { lastError = error; }
+  if (!supportedPlatform()) throw failure('当前系统暂不支持运行汽水辅助程序。', 'setup');
+  const value = typeof host.setting === 'function' ? host.setting('nodePath') : '';
+  const configured = typeof value === 'string' ? value.trim() : '';
+  if (/[\u0000-\u001f\u007f]/.test(configured)) throw failure('Node.js 路径包含无效字符，请检查插件设置。', 'setup');
+  // An explicit choice is authoritative; only automatic discovery falls back.
+  for (const command of configured ? [configured] : NODE[host.platform]) {
+    try { return host.spawn(command, [script]); }
+    catch (error) { if (!missingNodeExecutable(error)) throw error; }
   }
-  throw lastError || failure('当前系统暂不支持运行汽水辅助程序。');
+  throw failure(configured
+    ? '未找到设置的 Node.js。请在插件设置中检查“Node.js 路径”，填写可执行文件的完整路径，不要加引号。'
+    : '未找到 Node.js。请安装 Node.js 24 或更新版本并重启 MyGo，或在插件设置中填写“Node.js 路径”。', 'setup');
 }
 let generation = 0;
 let signingIn = false;
@@ -220,13 +234,18 @@ export async function signIn() {
     host.signInPrompt({ text: '正在初始化独立设备并加载汽水官方登录 SDK…' });
     helper = spawnHelper('./browser-helper.cjs');
     activeHelper = helper;
-    helper.write(JSON.stringify({ type: 'start', device: device || null }) + '\n');
-    const timeout = new Promise((_, reject) => {
+    helper.write(JSON.stringify({ type: 'start', device: device || null, ...(typeof host.dataDir === 'string' ? { dataDir: host.dataDir } : {}) }) + '\n');
+    let timedOut;
+    const timeout = new Promise((_, reject) => { timedOut = reject; });
+    const arm = milliseconds => {
+      clearTimeout(timer);
       timer = setTimeout(() => {
         try { helper.closeStdin(); } catch (_) {}
-        reject(failure('登录已超时，请重新登录。'));
-      }, 255000);
-    });
+        timedOut(failure('登录已超时，请重新登录。'));
+      }, milliseconds);
+    };
+    arm(255000);
+    let preparing = false;
     while (true) {
       const line = await Promise.race([helper.readLine(), timeout]);
       current();
@@ -235,7 +254,15 @@ export async function signIn() {
       let message;
       try { message = JSON.parse(line); } catch (_) { throw failure('登录辅助程序返回无效消息。'); }
       if (!message || typeof message !== 'object') throw failure('登录辅助程序返回无效消息。');
-      if (message.type === 'device') {
+      if (message.type === 'progress') {
+        if (!preparing) { arm(720000); preparing = true; }
+        host.signInPrompt({ text: typeof message.text === 'string' ? message.text.slice(0, 160) : '正在准备汽水组件…' });
+      } else if (message.type === 'ready') {
+        arm(255000);
+      } else if (message.type === 'verification') {
+        arm(240000);
+        host.signInPrompt({ text: '汽水要求额外安全验证。请在电脑上弹出的官方验证窗口中继续；完成后 MyGo 会接着登录，无需重新扫码。' });
+      } else if (message.type === 'device') {
         const d = message.device;
         if (!d || d.schema !== 1 || d.aid !== 386088 || typeof d.did !== 'string' || typeof d.iid !== 'string' ||
           !/^[1-9]\d{8,24}$/.test(d.did) || !/^[1-9]\d{8,24}$/.test(d.iid)) throw failure('登录设备注册结果无效。');
@@ -245,13 +272,16 @@ export async function signIn() {
         let qr;
         try { qr = new URL(message.url); } catch (_) { throw failure('登录二维码无效。'); }
         const tokens = qr.searchParams.getAll('token');
+        const computers = qr.searchParams.getAll('computer_name');
         if (qr.origin !== 'https://bff-pc.qishui.com' || qr.pathname !== '/light/invoke/scan_login' || qr.username || qr.password ||
-          tokens.length !== 1 || !tokens[0] || (qrToken && tokens[0] !== qrToken)) throw failure('登录二维码来源或会话不符合预期。');
+          tokens.length !== 1 || !tokens[0] || (qrToken && tokens[0] !== qrToken) ||
+          computers.length !== 1 || !computers[0] || computers[0].length > 255 || /[\u0000-\u001f\u007f]/.test(computers[0])) throw failure('登录二维码来源或会话不符合预期。');
         qrToken = tokens[0];
         host.signInPrompt({ qr: qr.href, text: message.status === 'scanned'
           ? '已扫码，请在汽水音乐 App 上确认登录。'
-          : '新版 ' + VERSION + '：请用汽水音乐 App「搜索 → 扫一扫」扫码，并在手机确认登录 MyGo Music。' });
+          : '新版 ' + VERSION + '：请用汽水音乐 App「搜索 → 扫一扫」扫码，并在手机确认登录此电脑（' + computers[0] + '）。' });
       } else if (message.type === 'error') {
+        if (message.code === 'setup') throw failure(typeof message.description === 'string' ? message.description.slice(0, 220) : '汽水组件准备失败，请检查网络后重试。', 'setup');
         const stage = ['注册插件设备', '初始化浏览器', '加载官方登录 SDK', '初始化登录设备', '获取二维码', '扫码确认', '校验账号'].includes(message.stage) ? message.stage : '账号登录';
         platformFailure({ error_code: message.code || 'unknown', data: { description: message.description, status: message.status } }, stage, jar, { token: qrToken });
       } else if (message.type === 'complete') {
@@ -318,15 +348,28 @@ function requestMedia(operation, params) {
       mediaProcesses.add(helper);
       helper.write(JSON.stringify({ ...params, operation, cacheDir, device: saved.device || host.storage.get(DEVICE),
         jar: saved.jar, accountId: saved.account && saved.account.id }) + '\n');
-      const timeout = new Promise((_, reject) => { timer = setTimeout(() => {
-        try { helper.closeStdin(); } catch (_) {}
-        reject(failure('获取音乐超时，请重试或选择较低音质。', 'unavailable'));
-      }, 28500); });
-      const line = await Promise.race([helper.readLine(), timeout]);
+      let timedOut;
+      const timeout = new Promise((_, reject) => { timedOut = reject; });
+      const arm = milliseconds => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          try { helper.closeStdin(); } catch (_) {}
+          timedOut(failure('获取音乐超时，请重试或选择较低音质。', 'unavailable'));
+        }, milliseconds);
+      };
+      arm(28500);
+      let preparing = false, message;
+      while (true) {
+        const line = await Promise.race([helper.readLine(), timeout]);
+        if (epoch !== generation) throw failure('账号已变化，本次音乐请求已取消。');
+        if (typeof line !== 'string' || line.length > 4 * 1024 * 1024) throw failure('音乐组件未返回有效结果。', 'unavailable');
+        try { message = JSON.parse(line); } catch (_) { throw failure('音乐组件返回无效消息。', 'unavailable'); }
+        if (message && message.type === 'progress') {
+          if (!preparing) { arm(720000); preparing = true; }
+        } else if (message && message.type === 'ready') arm(28500);
+        else break;
+      }
       if (epoch !== generation) throw failure('账号已变化，本次音乐请求已取消。');
-      if (typeof line !== 'string' || line.length > 4 * 1024 * 1024) throw failure('音乐组件未返回有效结果。', 'unavailable');
-      let message;
-      try { message = JSON.parse(line); } catch (_) { throw failure('音乐组件返回无效消息。', 'unavailable'); }
       if (!message || message.ok !== true) {
         if (message && message.code === 'signIn') { host.storage.remove(SESSION); clearMusicCache(); }
         const code = message && ['signIn', 'setup', 'unavailable', 'unsupported'].includes(message.code) ? message.code : 'unavailable';

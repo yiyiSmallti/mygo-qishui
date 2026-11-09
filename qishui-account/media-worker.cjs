@@ -90,7 +90,7 @@ function authorizedKey(stream) {
   fail('本机播放组件返回的授权格式暂不受支持。');
 }
 async function convert(input, output, key, expectedMs) {
-  if (!FFMPEG || !fs.existsSync(FFMPEG)) fail(process.platform === 'darwin' ? '未找到 FFmpeg，请先用 Homebrew 安装 ffmpeg。' : '未找到本机音频转换组件，请重新配置插件。', 'setup');
+  if (!FFMPEG || !fs.existsSync(FFMPEG)) fail(process.platform === 'darwin' ? '未找到 FFmpeg，请先用 Homebrew 安装 ffmpeg。' : '未找到 FFmpeg，请安装后将 ffmpeg.exe 所在目录加入 PATH，并重启 MyGo。', 'setup');
   const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-protocol_whitelist', 'file,pipe',
     ...(key ? ['-decryption_key', key] : []), '-i', input, '-map', '0:a:0',
     '-vn', '-sn', '-dn', '-map_metadata', '-1', '-c:a', 'flac', '-compression_level', '0',

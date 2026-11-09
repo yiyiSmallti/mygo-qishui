@@ -33,14 +33,14 @@ function validDevice(value) {
 
 function codec(input) {
   const addon = sodaAddon('device.node');
-  if (!addon || !fs.existsSync(addon)) throw failure('缺少本机汽水音乐设备编码组件，无法注册新设备。');
+  if (!addon || !fs.existsSync(addon)) throw Object.assign(failure('缺少汽水设备编码组件，请重新准备免安装组件。'), { code: 'setup' });
   const result = spawnSync(process.execPath, [__filename, '--codec-worker'], {
     input, cwd: __dirname, timeout: 12000, windowsHide: true, maxBuffer: 131072,
   });
   // Never relay native stderr, paths, stack traces or arbitrary native output.
   if (result.error && result.error.code === 'ETIMEDOUT') throw failure('汽水设备编码超时，请稍后重试。');
   if (result.error || result.status !== 0 || !result.stdout || !result.stdout.length)
-    throw failure('汽水设备编码组件未能完成初始化。');
+    throw Object.assign(failure('汽水设备编码组件未能初始化，请检查 Node.js 与组件架构是否一致。'), { code: 'setup' });
   return result.stdout;
 }
 
@@ -96,7 +96,7 @@ async function ensureDevice(existing) {
       identityType: 'fresh-plugin-pseudonymous', channel, clientVersion: VERSION,
     };
   } catch (error) {
-    if (error && error.code === 'QISHUI_DEVICE') throw error;
+    if (error && ['QISHUI_DEVICE', 'setup'].includes(error.code)) throw error;
     if (error && (error.name === 'AbortError' || error.name === 'TimeoutError'))
       throw failure('连接汽水设备注册接口超时，请稍后重试。');
     throw failure('无法完成汽水设备注册，请检查网络后重试。');

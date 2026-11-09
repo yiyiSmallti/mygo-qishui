@@ -44,7 +44,7 @@ function readInstalledVersion(asarPath) {
     if (metadata.name !== 'SodaMusic' || !/^\d+\.\d+\.\d+$/.test(metadata.version)) throw new Error();
     return metadata.version;
   } catch {
-    fail('无法读取本机汽水音乐签名组件的版本，请确认汽水音乐仍安装在原位置。', 'nativeSdk');
+    fail('无法读取汽水签名组件版本，请重新准备组件。', 'setup');
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
   }
@@ -89,7 +89,7 @@ function getSigner(device, soda) {
     signerState = { signer, did: device.did, version, unpacked: soda.unpacked };
     return signerState;
   } catch {
-    fail('无法加载本机汽水音乐签名组件，请检查汽水音乐安装是否完整。', 'nativeSdk');
+    fail('无法加载汽水签名组件，请检查 Node.js 与组件架构，并重新准备组件。', 'setup');
   }
 }
 
@@ -99,16 +99,16 @@ function addSignature(signer, url, headers) {
     const lines = Object.entries(headers).map(([name, value]) => name + '\r\n' + value).join('\r\n');
     signature = signer.generateHttpSignatureHeaders(url, lines);
   } catch {
-    fail('汽水音乐请求签名失败，请重新打开播放连接。', 'nativeSdk');
+    fail('汽水音乐请求签名失败，请重新打开播放连接。', 'setup');
   }
-  if (typeof signature !== 'string' || !signature.trim()) fail('汽水音乐签名组件未返回有效结果。', 'nativeSdk');
+  if (typeof signature !== 'string' || !signature.trim()) fail('汽水音乐签名组件未返回有效结果。', 'setup');
   const pairs = signature.split('\r\n').filter(item => item.trim());
-  if (pairs.length % 2) fail('汽水音乐签名结果格式无效。', 'nativeSdk');
+  if (pairs.length % 2) fail('汽水音乐签名结果格式无效。', 'setup');
   for (let i = 0; i < pairs.length; i += 2) {
     const name = pairs[i], value = pairs[i + 1];
     if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) || /[\r\n]/.test(value)
         || /^(cookie|authorization|host|user-agent|content-length|content-type)$/i.test(name)) {
-      fail('汽水音乐签名组件返回了异常请求头。', 'nativeSdk');
+      fail('汽水音乐签名组件返回了异常请求头。', 'setup');
     }
     headers[name] = value;
   }
@@ -123,7 +123,7 @@ async function requestMetadata({ route, params = {}, payload, label, device, jar
   validateDevice(device);
   const cookie = cookieHeader(jar, route);
   if (signal?.aborted) fail('已取消获取' + label + '。', 'cancelled');
-  if (!soda || !path.isAbsolute(soda.asar) || !path.isAbsolute(soda.unpacked)) fail('未找到本机汽水音乐 3.7.0 安装，请先安装官方客户端。', 'nativeSdk');
+  if (!soda || !path.isAbsolute(soda.asar) || !path.isAbsolute(soda.unpacked)) fail('未找到汽水签名组件，请重新准备免安装组件。', 'setup');
   const { signer, version } = getSigner(device, soda);
   const url = new URL(route, API_ORIGIN);
   // The request platform must match bdms.node: a Mac signature sent with

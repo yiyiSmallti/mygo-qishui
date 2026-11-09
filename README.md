@@ -12,7 +12,7 @@
 | macOS · Apple Silicon | 已有会话的账号读取、喜欢列表、搜索、完整音频下载与转换，以及 MyGo 窗口内播放 | 最新 `main` 的 `qishui-account` 源码目录 |
 | macOS · Intel | 已有架构目录查找逻辑，尚未实机验证 | 暂无已验证的安装说明 |
 
-透明任务栏播放条、拖动吸附和任务栏逐字歌词仅适用于 Windows。macOS 的新设备扫码流程尚未完成本轮实机验证；Linux 暂不支持。两端均需自行安装 [本机依赖](qishui-account/README.md#本机依赖)。
+透明任务栏播放条、拖动吸附和任务栏逐字歌词仅适用于 Windows。macOS 的新设备扫码流程尚未完成本轮实机验证；Linux 暂不支持。Node.js、浏览器和 FFmpeg 需自行安装；Windows x64 新增从官方安装包自动提取汽水组件的免安装流程，尚待 Windows 实机验证。详见 [本机依赖](qishui-account/README.md#本机依赖)。
 
 ## 界面截图
 
@@ -89,15 +89,21 @@
 
 ## 安装与使用
 
+**本轮免安装修复尚未包含在现有 Release 中**：请使用包含 `native-sdk.cjs` 的源码目录或本地构建 ZIP，并通过「从本机安装」重新加载插件。现有 Release 的依赖仍需按原配置准备。
+
 **Windows x64 从 GitHub 安装**：先阅读 [本机依赖说明](qishui-account/README.md#本机依赖)，再在 MyGo「设置 → 插件 → ＋ → 从 GitHub 安装」输入 `yiyiSmallti/mygo-qishui`。MyGo 会从 [最新 Release](https://github.com/yiyiSmallti/mygo-qishui/releases/latest) 获取 `plugin-windows-amd64.zip`；也可下载该 ZIP 从本机安装。发布包的根目录包含 `plugin.json`，只包含插件文件，不包含主程序补丁、账号数据或第三方运行组件。当前发布包仅用于 Windows x64。
 
 **macOS 安装**：先准备 Node.js 24 或更新版本、FFmpeg、Chrome／Edge／Chromium 和汽水音乐 3.7.0 官方客户端，再下载或拉取本仓库最新 `main` 源码。解压后，在 MyGo「设置 → 插件 → ＋ → 从本机安装」选择其中的 **`qishui-account` 子目录**。具体路径与依赖见 [macOS 依赖说明](qishui-account/README.md#macosapple-silicon-已验证)。Mac 播放修复已在 `main` 中；现有 Windows Release 包不代表已发布该修复。
+
+**Node.js 安装在其他位置时**：Windows 优先从 `PATH` 查找 `node`，再尝试标准安装目录；macOS 保留 Homebrew／Node.js 常见目录查找。两端均可在汽水插件设置中的「Node.js 路径」填写完整可执行文件路径，留空自动查找。路径含空格时也无需加引号。
+
+**扫码设备名与二次验证**：手机确认页使用系统当前的电脑名称；平台要求额外安全验证时，插件显示官方验证窗口，完成后继续同一次扫码登录。此修复尚未包含在现有 Release 中，真实账号验证仍需在目标机器上完成。
 
 仓库还包含播放器补丁和测试，因此请勿将 GitHub 的 **Code → Download ZIP** 整包当作插件安装。已有本机安装的同名插件若被提示来源不同，可继续使用下载的发布 ZIP 从本机升级，保留原安装来源。
 
 从源码目录安装：
 
-1. 按 [插件依赖说明](qishui-account/README.md#本机依赖) 准备 Node.js、汽水客户端本机组件及 FFmpeg，并检查配置路径。
+1. 按 [插件依赖说明](qishui-account/README.md#本机依赖) 准备 Node.js、浏览器及 FFmpeg。Windows x64 可在首次登录时自动提取汽水组件；macOS 仍使用已安装客户端中的组件。
 2. 在 MyGo「设置 → 插件 → ＋ → 从本机安装」选择本仓库的 `qishui-account` 文件夹，启用插件并允许其运行辅助程序。
 3. 切换到汽水音源，在账号菜单选择登录，用汽水 App 扫码并在手机上确认。
 4. 从推荐、听歌模式、喜欢的音乐或音乐库选择歌曲；需要更新资料时使用对应刷新入口。
@@ -111,7 +117,7 @@
 
 ## 当前限制
 
-- **依赖仍由使用者本机提供。** macOS 自动查找标准应用目录及 Homebrew／Node.js 安装目录；Windows 仍保留原开发环境的部分依赖路径，换电脑前需核对 `qishui-account/local-env.cjs` 和插件中的 Node.js 路径。音频缓存已改为使用 MyGo 提供的插件数据目录，按账号隔离。仓库不包含 Node.js、汽水原生组件或 FFmpeg。
+- **依赖仍由使用者本机提供。** Node.js 支持自动查找和插件设置中的自定义路径；macOS 的其他依赖从标准应用及 Homebrew 目录查找。Windows x64 缺少汽水组件时会下载并校验官方 3.7.0 安装包，仅提取所需组件；FFmpeg 从 `PATH` 查找。Windows 免安装流程还需要支持 7z 的系统 `tar.exe`，实机验证待完成。音频缓存使用 MyGo 提供的插件数据目录，按账号隔离。仓库不包含 Node.js、汽水原生组件或 FFmpeg。
 - Mac 已验证 Apple Silicon；Intel 尚未实测。macOS 的验证使用已有登录会话，不能视为全新安装、首次扫码和全部功能均已验收。
 - 播放受当前账号获得的服务端授权限制；平台未提供完整音频时不能播放，视频作品暂不支持。AAC 转换成 FLAC 是兼容处理，不会提升源音质。
 - 歌单与专辑收藏目前只读；歌曲喜欢支持写入，但之前的写入验证使用模拟测试，未为测试修改真实账号。

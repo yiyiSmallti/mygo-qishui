@@ -5,6 +5,9 @@
   "main": "index.js",
   "playback": "stream",
   "permissions": { "network": ["api.qishui.com"], "process": true },
+  "settings": [
+    { "key": "nodePath", "label": "Node.js 路径", "help": "可选。填写 node.exe 或 node 的完整路径，无需加引号；留空自动查找。需要 Node.js 24 或更新版本。" }
+  ],
   "navigation": [
     { "builtin": "home", "title": "推荐" },
     { "page": "listening", "title": "听歌模式", "icon": "radio" },

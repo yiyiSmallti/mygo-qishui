@@ -11,7 +11,7 @@ const DIAGNOSTIC = 'qishui-login-diagnostic-v1';
 const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 const account = { id: '7631943856258566161', name: '测试账号' };
 const device = { schema: 1, aid: 386088, did: '71234567890123456', iid: '71234567890123457', clientVersion: '3.7.0' };
-const qrURL = 'https://bff-pc.qishui.com/light/invoke/scan_login?token=abc123&os=Windows&computer_name=MyGo%20Music';
+const qrURL = 'https://bff-pc.qishui.com/light/invoke/scan_login?token=abc123&os=Windows&computer_name=DESKTOP-QISHUI';
 const qr = () => ({ type: 'qr', url: qrURL, status: 'new' });
 const cookie = () => ({ name: 'sessionid', value: 'test-session', path: '/', expires: 0 });
 const complete = () => ({ type: 'complete', cookies: [cookie()], account: clone(account) });
@@ -84,7 +84,7 @@ test('helper transport uses private JSON lines and validates identity before sav
     },
   });
   assert.deepEqual(clone(await h.api.signIn()), account);
-  assert.deepEqual(h.spawned, [{ command: String.raw`C:\Program Files\nodejs\node.exe`, args: ['./browser-helper.cjs'] }]);
+  assert.deepEqual(h.spawned, [{ command: 'node', args: ['./browser-helper.cjs'] }]);
   assert.equal(h.inputs.length, 1);
   assert.ok(h.inputs[0].endsWith('\n'));
   assert.deepEqual(JSON.parse(h.inputs[0]), { type: 'start', device: null });

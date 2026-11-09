@@ -8,13 +8,16 @@ const { spawn } = require('node:child_process');
 const { randomUUID, randomBytes } = require('node:crypto');
 const readline = require('node:readline');
 const { ensureDevice } = require('./device.cjs');
-const { browserPath, scanLabel } = require('./local-env.cjs');
+const { prepareSdk } = require('./native-sdk.cjs');
+const { browserPath, scanLabel, deviceName } = require('./local-env.cjs');
 
 const ORIGIN = 'https://api.qishui.com';
 const GLUE = 'https://lf-headquarters-speed.yhgfb-cn-static.com/obj/rc-client-security/web/glue/1.0.0.36/sdk-glue.js';
 const probe = process.argv.includes('--probe');
 const secrets = new Set();
-let child, profile, session, closing = false, stage = '初始化浏览器';
+let child, profile, session, targetId, windowId, preparing, dataDir, closing = false, stage = '初始化浏览器';
+let verificationMs = 0, cleanupTask;
+const sdkController = new AbortController();
 let seq = 0, incoming = '', pending = new Map();
 const securityFields = new Set();
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -106,23 +109,28 @@ async function cookies() {
   for (const c of items) secrets.add(c.value);
   return items.map(c => ({ name: c.name, value: c.value, path: c.path, expires: c.expires > 0 ? c.expires * 1000 : 0 }));
 }
-async function cleanup() {
-  if (closing) return;
+function cleanup() {
+  if (cleanupTask) return cleanupTask;
   closing = true;
-  for (const p of pending.values()) { clearTimeout(p.timer); p.reject(fail('登录已取消')); }
-  pending.clear();
-  // Closing the inherited debugging pipe also closes this isolated browser.
-  if (child) {
-    child.stdio[3].end();
-    if (child.exitCode === null) await Promise.race([new Promise(resolve => child.once('exit', resolve)), sleep(3000)]);
-    if (child.exitCode === null) child.kill();
-  }
-  if (profile) {
-    const resolved = path.resolve(profile), base = path.resolve(os.tmpdir());
-    if (path.dirname(resolved) === base && path.basename(resolved).startsWith('mygo-qishui-login-')) {
-      try { await fs.promises.rm(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
+  cleanupTask = (async () => {
+    sdkController.abort();
+    if (preparing) { try { await preparing; } catch {} }
+    for (const p of pending.values()) { clearTimeout(p.timer); p.reject(fail('登录已取消')); }
+    pending.clear();
+    // Closing the inherited debugging pipe also closes this isolated browser.
+    if (child) {
+      child.stdio[3].end();
+      if (child.exitCode === null) await Promise.race([new Promise(resolve => child.once('exit', resolve)), sleep(3000)]);
+      if (child.exitCode === null) child.kill();
     }
-  }
+    if (profile) {
+      const resolved = path.resolve(profile), base = path.resolve(os.tmpdir());
+      if (path.dirname(resolved) === base && path.basename(resolved).startsWith('mygo-qishui-login-')) {
+        try { await fs.promises.rm(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
+      }
+    }
+  })();
+  return cleanupTask;
 }
 async function startBrowser() {
   const executable = browserPath();
@@ -130,7 +138,7 @@ async function startBrowser() {
   profile = fs.mkdtempSync(path.join(os.tmpdir(), 'mygo-qishui-login-'));
   // macOS: keep the throwaway profile away from the login keychain prompt.
   const platformFlags = process.platform === 'darwin' ? ['--use-mock-keychain', '--password-store=basic'] : [];
-  child = spawn(executable, ['--headless=new', '--remote-debugging-pipe', '--no-first-run',
+  child = spawn(executable, [...(probe ? ['--headless=new'] : ['--window-size=600,760']), '--remote-debugging-pipe', '--no-first-run',
     '--no-default-browser-check', ...platformFlags, '--user-data-dir=' + profile, 'about:blank'],
   { windowsHide: true, stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
   child.stdio[4].setEncoding('utf8');
@@ -141,9 +149,17 @@ async function startBrowser() {
     for (const p of pending.values()) { clearTimeout(p.timer); p.reject(fail('登录浏览器已退出')); }
     pending.clear();
   });
-  const target = await command('Target.createTarget', { url: 'about:blank' }, null);
-  const attached = await command('Target.attachToTarget', { targetId: target.targetId, flatten: true }, null);
+  const targets = await command('Target.getTargets', {}, null);
+  const target = targets.targetInfos?.find(item => item.type === 'page' && item.url === 'about:blank')
+    || await command('Target.createTarget', { url: 'about:blank' }, null);
+  targetId = target.targetId;
+  const attached = await command('Target.attachToTarget', { targetId, flatten: true }, null);
   session = attached.sessionId;
+  if (!probe) {
+    const window = await command('Browser.getWindowForTarget', { targetId }, null);
+    windowId = window.windowId;
+    await command('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } }, null);
+  }
   await command('Page.enable');
   await command('Network.enable');
   await command('Page.navigate', { url: ORIGIN + '/' });
@@ -156,6 +172,8 @@ async function startBrowser() {
   const frame = await command('Page.getFrameTree');
   if (frame.frameTree.frame.securityOrigin !== ORIGIN) throw fail('登录页面来源不符合预期');
   await evaluate(fs.readFileSync(path.join(__dirname, 'browser-info.js'), 'utf8'));
+  await evaluate(fs.readFileSync(path.join(__dirname, 'browser-verification.js'), 'utf8'));
+  if (!probe) await evaluate(`document.title='MyGo 汽水音乐登录';document.body.textContent='请回到 MyGo 使用汽水音乐 App 扫码。如平台要求额外安全验证，本窗口会显示官方验证界面。';`);
   stage = '加载官方登录 SDK';
   const sdk = await evaluate(`(async()=>{
     const script=document.createElement('script'); script.src=${JSON.stringify(GLUE)};
@@ -197,6 +215,67 @@ async function request(endpoint, body, options = {}) {
   rememberSensitive(result.data);
   return result.data;
 }
+function challengeFor(value) {
+  if (!value || typeof value !== 'object') return null;
+  const nested = value.data && typeof value.data === 'object' && !Array.isArray(value.data) ? value.data : {};
+  const error = [nested, value].find(item => Number(item.error_code) === 2046 && typeof item.url === 'string');
+  if (error) return { kind: 'modern', decision: error, body: error.biz_params };
+  const raw = nested.verify_center_decision_conf || nested.verify_center_secondary_decision_conf
+    || value.verify_center_decision_conf || value.verify_center_secondary_decision_conf;
+  if (typeof raw !== 'string' || raw.length > 131072) return null;
+  let decision;
+  try { decision = JSON.parse(raw); } catch { return null; }
+  if (!decision || typeof decision !== 'object' || ![10000, 20000].includes(Number(decision.code))) return null;
+  const sms = nested.sms_code_key || value.sms_code_key;
+  return { kind: 'legacy', decision, ...(Number(nested.error_code || value.error_code) === 2046 && typeof sms === 'string' ? { body: { sms_code_key: sms } } : {}) };
+}
+async function completeVerification(challenge, device, portrait) {
+  if (probe) throw fail('汽水要求额外安全验证，请在 MyGo 发起交互式登录。', '2046');
+  const began = Date.now(), previous = stage;
+  stage = '额外安全验证';
+  emit({ type: 'verification' });
+  try {
+    await command('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } }, null);
+    await command('Target.activateTarget', { targetId }, null);
+    await evaluate(`window.__mygoVerify(${JSON.stringify({ kind: challenge.kind, decision: challenge.decision, device, portrait })});true`);
+    const deadline = Date.now() + 185000;
+    while (!closing && Date.now() < deadline) {
+      const state = await evaluate('window.__mygoVerificationState');
+      if (state?.status === 'success') return state;
+      if (state?.status === 'cancelled') throw fail('已关闭汽水安全验证，尚未登录成功。', '2046');
+      if (state?.status === 'timeout') throw fail('汽水安全验证已超时，请重新登录。', '2046');
+      if (state?.status === 'unsupported') throw fail('汽水返回的验证入口暂不受支持，尚未登录成功。', '2046');
+      if (state?.status === 'loadFailed') throw fail('汽水官方验证界面未能加载，请检查网络后重新登录。', '2046');
+      await sleep(250);
+    }
+    throw fail('汽水安全验证已取消或超时，尚未登录成功。', '2046');
+  } finally { verificationMs += Date.now() - began; stage = previous; }
+}
+async function verifiedRequest(endpoint, body, options, device) {
+  const result = await request(endpoint, body, options);
+  const challenge = challengeFor(result);
+  if (!challenge) {
+    if (Number(result?.data?.error_code || result?.error_code) === 2046) throw fail('汽水要求额外安全验证，但未返回可打开的验证入口，本次登录无法继续。', '2046');
+    return checked(result);
+  }
+  const completed = await completeVerification(challenge, device, options.portrait);
+  const url = new URL(endpoint, ORIGIN);
+  url.searchParams.set('isResend', 'true');
+  if (typeof completed.fp === 'string' && completed.fp) {
+    url.searchParams.set('fp', completed.fp); url.searchParams.set('verifyFp', completed.fp);
+  }
+  let resendBody = body;
+  if (challenge.body && typeof challenge.body === 'object' && !Array.isArray(challenge.body)) {
+    const fields = body === undefined ? url.searchParams : new URLSearchParams(body);
+    for (const [key, value] of Object.entries(challenge.body)) fields.set(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
+    if (body !== undefined) resendBody = fields.toString();
+  }
+  // One successful official verification resumes exactly this QR request.
+  // A repeated challenge remains an error; never create an endless rescan loop.
+  const resumed = await request(url.pathname + url.search, resendBody, options);
+  if (challengeFor(resumed)) throw fail('验证完成后汽水仍要求额外验证，本次登录未完成。请稍后重新登录。', '2046');
+  return checked(resumed);
+}
 async function initializeTtwid() {
   stage = '初始化登录设备';
   const options = { aid: 386088, service: 'api.qishui.com', host: ORIGIN, unionHost: '', union: false, needFid: false };
@@ -227,26 +306,28 @@ async function login(existing) {
     device_platform: 'PC', version_code: device.clientVersion });
   const flow = { trace, portrait };
   stage = '获取二维码';
-  const created = checked(await request('/passport/web/get_qrcode/?' + params + '&next=https%3A%2F%2Fapi.qishui.com&need_logo=false&need_short_url=false&is_new_login=1', undefined, flow));
+  const created = await verifiedRequest('/passport/web/get_qrcode/?' + params + '&next=https%3A%2F%2Fapi.qishui.com&need_logo=false&need_short_url=false&is_new_login=1', undefined, flow, device);
   const data = created.data || {};
   if (typeof data.token !== 'string' || !data.token || typeof data.qrcode_index_url !== 'string') throw fail('汽水未能生成二维码');
   secrets.add(data.token);
   const original = new URL(data.qrcode_index_url);
   if (original.protocol !== 'https:' || original.hostname !== 'bff-pc.qishui.com' || original.username || original.password || original.searchParams.getAll('token').length !== 1 || original.searchParams.get('token') !== data.token) throw fail('二维码来源或会话不符合预期');
   const qr = new URL('https://bff-pc.qishui.com/light/invoke/scan_login');
-  qr.searchParams.set('token', data.token); qr.searchParams.set('os', scanLabel()); qr.searchParams.set('computer_name', 'MyGo Music');
+  qr.searchParams.set('token', data.token); qr.searchParams.set('os', scanLabel()); qr.searchParams.set('computer_name', deviceName());
   const qrURL = qr.href.replace(/\+/g, '%20');
   if (!probe) emit({ type: 'qr', url: qrURL, status: 'new' });
   const body = new URLSearchParams({ need_logo: 'false', need_short_url: 'false', is_frontier: 'true',
     token: data.token, is_new_login: '1', next: ORIGIN }).toString();
-  const deadline = Date.now() + 150000;
+  let deadline = Date.now() + 150000;
   while (!closing && Date.now() < deadline) {
     await sleep(2000);
     stage = '扫码确认';
-    const result = checked(await request('/passport/web/check_qrconnect/?' + params + '&is_new_login=1', body, flow));
+    const paused = verificationMs;
+    const result = await verifiedRequest('/passport/web/check_qrconnect/?' + params + '&is_new_login=1', body, flow, device);
+    deadline += verificationMs - paused;
     const state = result.data || {}, status = String(state.status || '');
     if (probe) { emit({ type: 'probe', sdkReady: sdk.ready, bdms: sdk.bdms, deviceRegistered: true,
-      ttwid: (await cookies()).some(c => c.name === 'ttwid'), qrReady: true, pollStatus: status,
+      ttwid: (await cookies()).some(c => c.name === 'ttwid'), qrReady: true, computerNameMatchesSystem: qr.searchParams.get('computer_name') === deviceName(), pollStatus: status,
       securityFields: [...securityFields] }); return; }
     if (status === '3' || status === 'confirmed' || (typeof state.session_cookie === 'string' && state.session_cookie)) {
       if (typeof state.session_cookie === 'string') {
@@ -286,14 +367,19 @@ async function main() {
       input.once('close', ended); input.once('error', ended);
       input.once('line', line => {
         stop();
-        try { const message = JSON.parse(line); if (message.type !== 'start') throw new Error(); resolve(message.device); }
+        try { const message = JSON.parse(line); if (message.type !== 'start') throw new Error(); dataDir = message.dataDir; resolve(message.device); }
         catch { reject(fail('登录初始化消息无效')); }
       });
     });
     input.on('line', () => { cleanup().finally(() => process.exit(0)); });
     input.on('close', () => { cleanup().finally(() => process.exit(0)); });
   }
-  const total = setTimeout(() => { cleanup().finally(() => process.exit(1)); }, 250000);
+  stage = '准备汽水组件';
+  preparing = prepareSdk({ dataDir, signal: sdkController.signal, onProgress: text => { if (!probe && !closing) emit({ type: 'progress', text }); } });
+  await preparing;
+  if (closing) return;
+  if (!probe) emit({ type: 'ready' });
+  const total = setTimeout(() => { cleanup().finally(() => process.exit(1)); }, 500000);
   try { await login(existing); } finally { clearTimeout(total); }
 }
 main().catch(async error => {

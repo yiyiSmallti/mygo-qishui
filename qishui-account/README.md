@@ -41,7 +41,7 @@
 4. 账号校验通过后显示昵称和头像。打开「喜欢的音乐」「音乐库」或「收藏专辑」，也可以使用 MyGo 的搜索框搜索四类内容。
 5. 点击歌曲播放；首次播放需获取并转换音频，相同账号、歌曲和音质可复用本地缓存。
 
-原有插件登录状态可继续使用，不需要为升级重复扫码。二维码来自 `bff-pc.qishui.com/light/invoke/scan_login`，扫码终端标签为 MyGo Music。
+原有插件登录状态可继续使用，不需要为升级重复扫码。二维码来自 `bff-pc.qishui.com/light/invoke/scan_login`，扫码终端名称使用当前系统的设备名称：Windows 使用计算机名，macOS 使用系统设置中的电脑名称。
 
 ## 播放与加载方式
 
@@ -53,7 +53,15 @@
 
 ## 本机依赖
 
-这些依赖需自行安装，插件不会下载或打包第三方运行组件。安装后需在 MyGo 中授予此插件「运行程序」权限，辅助进程负责登录、签名请求和音频转换。
+Node.js、登录浏览器和 FFmpeg 需自行安装。Windows x64 可自动从官方安装包提取汽水组件，无需安装或启动完整汽水客户端；仓库和插件 ZIP 不附带原生组件。安装后需在 MyGo 中授予此插件「运行程序」权限，辅助进程负责登录、签名请求和音频转换。
+
+### Node.js 路径设置
+
+插件设置新增可选的「Node.js 路径」：填写 `node.exe`（Windows）或 `node`（macOS）的完整路径，可包含空格，不需要加引号；留空使用下方的自动查找顺序。设置后登录、搜索歌单、歌词和播放辅助程序共用该运行时。
+
+Windows 可在 PowerShell 中运行 `where.exe node` 查找当前安装位置，macOS 可运行 `command -v node`。使用 nvm／fnm 或自定义安装目录时，可把期望使用的 Node.js 24 或更新版本路径填入设置。修改 `PATH` 后需重启 MyGo，让它继承新的环境。
+
+只有找不到可执行文件时才尝试下一个自动候选位置。填写了自定义路径但文件不存在时会提示检查设置；未授予「运行程序」权限或启动被系统拒绝时保留相应错误。
 
 ### macOS（Apple Silicon 已验证）
 
@@ -62,18 +70,22 @@
 - **登录浏览器**：查找 `/Applications` 或 `~/Applications` 中的 Google Chrome、Microsoft Edge、Chromium，按此顺序选择。
 - **汽水音乐 3.7.0 官方客户端**：安装到 `/Applications/汽水音乐.app` 或 `~/Applications/汽水音乐.app`。从 `Contents/Resources/app.asar` 读取版本，并优先从 `app-<Node 架构>.asar.unpacked` 加载本机组件，兼容常规 `app.asar.unpacked` 目录。Apple Silicon 使用 ARM64 Node.js 和对应组件；`device.node`、`bdms.node` 及其依赖库应保留在官方安装位置。
 
-macOS 自动识别上述位置，不需要填写 Windows 路径。安装在其他位置的依赖需调整 `local-env.cjs` 或插件内的 Node.js 候选路径后再从本机安装。
+macOS 自动识别上述位置，不需要填写 Windows 路径。Node.js 安装在其他位置时可在插件设置中指定；其他依赖使用非标准位置时仍需调整 `local-env.cjs` 后再从本机安装。
 
 ### Windows x64
 
-当前 Windows 配置保留原开发环境的已验证路径，换电脑前需核对；浏览器和汽水安装目录另有标准位置查找逻辑：
+Windows x64 新增免安装组件准备流程（本轮源码／本地构建包已实现，现有 Release 尚未包含，Windows 实机仍待验证）：
 
-- Node.js 24：`C:\Program Files\nodejs\node.exe`。
+- Node.js 24 或更新版本：优先使用 `PATH` 中的 `node`，找不到时再尝试 `C:\Program Files\nodejs\node.exe`；也可在插件设置中指定完整路径。
 - 登录浏览器：优先使用 `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`；也支持标准安装目录中的 Edge 或 Chrome。本机另有 `C:\Program Files\Google\Chrome\Application\chrome.exe`。
-- 汽水音乐 3.7.0 安装目录：优先检查原开发路径 `D:\Users\22589\AppData\Local\Programs\Soda Music\3.7.0`，再查找 `%LOCALAPPDATA%\Programs\Soda Music\3.7.0`。设备注册及播放授权使用其中的 `resources\app.asar.unpacked\device.node`；播放信息及歌单搜索请求签名使用 `resources\app.asar.unpacked\bdms.node`，并从 `resources\app.asar` 读取版本。
-- 音频转换组件：`C:\Users\22589\AppData\Local\Programs\Python\Python311\Lib\site-packages\imageio_ffmpeg\binaries\ffmpeg-win-x86_64-v7.1.exe`。
+- **汽水组件免安装**：未找到完整的官方客户端组件时，首次登录或请求播放信息会从汽水官方 CDN 下载固定的 **3.7.0 x64** 安装包（约 144 MiB），校验 SHA256，再用系统 `tar.exe` 提取 `app.asar`、`device.node`、`bdms.node` 和 `metasecml.dll`。**不运行安装包，不创建官方客户端快捷方式或自启动项**。已有客户端时，查找 `%LOCALAPPDATA%\Programs\Soda Music`、`%ProgramFiles%\Soda Music` 和 `%ProgramFiles(x86)%\Soda Music` 中完整的安装目录，按版本由新到旧选择。
+- 免安装需要 **x64 Node.js** 和支持读取此 7z 归档的 Windows 系统 `tar.exe`。新版 Windows 11 有相应能力；旧版 Windows 的归档工具可能不支持，此时会提示更新 Windows 的归档工具。下载失败、哈希不符、磁盘权限等问题会单独报告，不清除已有登录。
+- 提取的组件存放在本插件数据目录的 `native-sdk-3.7.0-x64`，校验通过后重复使用；有效缓存无需再次下载。下载的完整安装包和解包临时文件会在完成或取消后删除。并发请求会等待同一次准备完成。
+- **FFmpeg**：安装 Windows 版 FFmpeg，把包含 `ffmpeg.exe` 的目录加入 `PATH`，然后重启 MyGo。播放仍需要此音频转换工具；免安装汽水组件不等于无需任何本机依赖。
 
-两端均不需要启动官方汽水客户端，也不读取它的账号资料或现有登录凭据。辅助进程会访问汽水 API、官方安全 SDK/CDN 及音频 CDN。
+下载固定指向 [汽水官方 3.7.0 x64 安装包](https://lf-luna-release.qishui.com/obj/luna-release/3.7.0/452316191/SodaMusic-v3.7.0-official-win32_x64.exe)，整体 SHA256 为 `e58578aec410e2c9c24835e92a1dc74d0fda982be1cf1003034538255baab0e4`，与 [Microsoft winget 3.7.0 清单](https://github.com/microsoft/winget-pkgs/blob/master/manifests/b/ByteDance/SodaMusic/3.7.0/ByteDance.SodaMusic.installer.yaml) 一致。仅提取与校验官方字节，不修改签名算法或上传账号到第三方服务。系统归档支持参考 [Microsoft tar 文档](https://learn.microsoft.com/en-us/windows/tar/)。
+
+两端均不需要启动官方汽水客户端，也不读取它的账号资料或现有登录凭据。辅助进程会访问汽水 API、官方安全 SDK/CDN 及音频 CDN；Windows 首次准备还会访问 `lf-luna-release.qishui.com`。
 
 ## 登录、存储与退出
 
@@ -83,10 +95,19 @@ macOS 自动识别上述位置，不需要填写 Windows 路径。安装在其�
 - 「退出登录」清除此插件的本地账号凭据和内存音乐库缓存，并取消插件正在进行的登录/媒体请求。不会退出手机或官方客户端，也不撤销其登录。
 - 插件自己的匿名设备身份会保留，供下次登录复用。
 - 音频缓存使用 MyGo 提供的插件数据目录：Windows 通常为 `%APPDATA%\MyGo Music\plugin-data\qishui-account\media-cache`，macOS 为 `~/Library/Application Support/MyGo Music/plugin-data/qishui-account/media-cache`。缓存按账号、歌曲和源音质区分；插件会在后续播放时清理较旧文件，目标总量不超过 512 MiB；退出账号不删除已有音频缓存。
-- 登录浏览器使用独立临时资料目录和私有进程管道，不读取日常浏览器资料；结束后退出并清理临时目录。
-- MyGo 0.1.5 登录弹窗的「取消」只关闭弹窗，插件流程可能继续等待至二维码过期；「退出登录」可终止该流程。若出现 `2046`，需要先完成官方要求的额外验证，再重新登录。
+- 登录浏览器使用独立临时资料目录和私有进程管道，不读取日常浏览器资料。正常取码时窗口最小化；汽水要求额外安全验证时，会显示官方验证界面，由用户完成。验证期间保留同一次扫码的浏览器、Cookie 与请求信息；官方成功回调后继续原请求并校验账号，结束后退出并清理临时目录。
+- MyGo 0.1.5 登录弹窗的「取消」只关闭弹窗，插件流程可能继续等待至二维码过期；「退出登录」可终止该流程。若出现 `2046` 且平台提供可用的验证数据，插件会打开同一登录会话中的官方验证界面。完成后继续连接 MyGo，无需重新扫码；关闭验证、超时或平台未提供受支持入口时，会保留失败说明。验证成功后仍被要求验证时会停止本次请求，避免反复取码。
 
 ## 验证记录
+
+### 设备名称与二次验证接续 · 2026-11-09
+
+扫码链接的 `computer_name` 使用系统设备名称。二次验证支持服务器返回的 `verify_center_decision_conf`／`verify_center_secondary_decision_conf`，以及新式 `2046` 加官方脚本 `url`；内容只交给隔离浏览器内的官方 SDK，不写入日志或账号存储。真实匿名取码已核对电脑名称，官方 SDK 加载、6 个浏览器场景和启动时取消清理检查通过，原有 131 项回归通过。Windows 实机的真实二次验证尚待人工完成，不保证更换显示名称会改变平台的验证要求。
+
+### Windows 免安装组件 · 2026-11-09
+
+在 macOS 上完成官方 Windows 3.7.0 安装包的真实下载和提取，整体 SHA256、各组件 SHA256、x64 PE 架构和静态 DLL 依赖已核对。并发准备、有效缓存复用、损坏缓存拒绝、取消后清理和残留锁恢复检查通过；原有 131 项回归及 Mac 两首完整授权歌曲解码通过。未执行安装包或 Windows 原生模块。Windows 本机首次扫码与播放尚待验证；本段不替代下方原有 Windows 已安装客户端的验证记录。
+
 
 ### Windows · 2026-11-07
 
