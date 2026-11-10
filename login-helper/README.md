@@ -36,10 +36,14 @@ go -C login-helper run ./cmd/package -root .. -native ../dist/login-helper -out 
 
 Mac 已通过上述原版入口取码和窗口验证，Windows 本轮只完成交叉编译，真实账号确认及平台二次验证仍需在目标电脑完成。
 
-## 随插件安装的样式增强（0.6.4）
+## 随插件安装的样式增强（0.6.5）
 
-Windows ZIP 包含 `native/style-installer.exe`、`native/layout-player.exe`、校验清单和完整对应源码。后者只在 v0.1.22 上加五个布局文件，不包含任务栏、登录或歌词改动。原版主程序没有插件安装钩子，因此插件提供明确的「界面增强」入口；首次安装仍需要用户确认关闭并重启主程序，不能仅靠图片或 CSS 改变原生布局。
+Windows ZIP 包含 `native/style-installer.exe`、`native/layout-player.exe`、校验清单和完整对应源码。后者在 v0.1.22 上增加布局及插件设置页动作支持，不包含任务栏、登录或歌词改动。原版主程序没有插件安装钩子，因此插件提供明确的「界面增强」入口；首次安装仍需要用户确认关闭并重启主程序，不能仅靠图片或 CSS 改变原生布局。
 
 Node 启动器绑定其真实 MyGo 父进程，使用私有管道完成双向交接后退出；独立原生助手不会被插件退出连带终止。助手以持有的进程 handle、创建时间、路径和已知 SHA-256 绑定目标，默认取消。已安装、取消及未知程序分支不创建备份或写 AppData；确认后才在用户私有目录备份数据与原程序，验证同目录文件未变，只原子替换 EXE。重启失败会恢复原文件，并独立检查原程序是否恢复运行；不请求管理员权限，不创建计划任务或自启动项，不依赖 PowerShell。
 
 构建样式组件使用 `scripts/build-style-player.mjs`；打包器的 `-style` 指定组件目录。Mac ZIP 不带 Windows 二进制或源码包。官方主程序更新可能覆盖增强，届时需要重新检查兼容版本。
+
+0.6.5 补入经官方发布包校验的 Windows x64 原版哈希。原有两个已验证构建继续支持；旧布局版需要确认升级才能获得设置页按钮。安装与失败回退均使用本次启动时核对的实际原程序哈希，不再假定所有原程序等于早期试验构建。
+
+设置页入口复现：将 `verification/settings-entry.go.txt` 复制到已应用本项目布局补丁的 MyGo v0.1.22 源码 `internal/app/qishui_settings_e2e_test.go`。在 Mac 上设置 `STYLE_PLUGIN_TEST_DIR` 为本项目 `qishui-account` 的绝对路径，并设置 `STYLE_ENTRY_EVIDENCE` 为独立证据目录，运行 `go test -tags styleqa ./internal/app -run TestQishuiSettingsActualPluginEntry -count=1`。该检查通过真实插件驱动设置页的无账号、非当前音源、重复点击与停用隐藏场景，并生成 PNG 和 JSON 工件；它使用 Mac 的不支持平台分支，不代替 Windows 安装与回退实测。

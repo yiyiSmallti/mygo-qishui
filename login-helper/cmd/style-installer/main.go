@@ -15,8 +15,13 @@ import (
 	"time"
 )
 
-const stockHash = "60208d6d3e647e8f8e8c1e1157657402032e9ce09553e0319a0a40823809284a"
-const pilotHash = "39f1383d6858cfaeeb305b722ed8529d364463495468b9c87d7cf209aef6ce28"
+const officialHash = "9e49bc806c3cff513c628fe40e94285c5388634e44bb333a4c21dc0dff555482"
+const previousVerifiedHash = "60208d6d3e647e8f8e8c1e1157657402032e9ce09553e0319a0a40823809284a"
+const previousLayoutHash = "39f1383d6858cfaeeb305b722ed8529d364463495468b9c87d7cf209aef6ce28"
+
+func supportedHash(hash string) bool {
+	return hash == officialHash || hash == previousVerifiedHash || hash == previousLayoutHash
+}
 
 type manifest struct {
 	Schema      int    `json:"schema"`

@@ -24,4 +24,4 @@
 
 ## 可选样式增强主程序
 
-0.6.4 的 Windows 插件包可选安装基于 MyGo Music v0.1.22 的布局增强程序。其完整对应源码和原 AGPL v3 许可随包位于 `native/layout-corresponding-source.zip`，五文件补丁位于 `patches/mygo-0.1.22-layout-only.patch`。该组件不包含任务栏或登录补丁。原生安装助手使用 Go 标准库及 Windows API；其源码随本项目提供。
+0.6.5 的 Windows 插件包可选安装基于 MyGo Music v0.1.22 的布局增强程序。其完整对应源码和原 AGPL v3 许可随包位于 `native/layout-corresponding-source.zip`，布局及插件设置页入口补丁位于 `patches/mygo-0.1.22-layout-only.patch`。该组件不包含任务栏或登录补丁。原生安装助手使用 Go 标准库及 Windows API；其源码随本项目提供。

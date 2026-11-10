@@ -1,0 +1,79 @@
+//go:build styleqa
+
+package app
+
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
+
+	"github.com/egoist/mygo/ui"
+	"mygo-music/internal/plugin"
+)
+
+// This drives the actual settings view and JavaScript plugin in an empty profile.
+// The Mac branch of the plugin keeps this UI check from launching a Windows helper.
+func TestQishuiSettingsActualPluginEntry(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("this entry check uses the unsupported-platform branch")
+	}
+	root := os.Getenv("STYLE_PLUGIN_TEST_DIR")
+	if root == "" {
+		t.Fatal("STYLE_PLUGIN_TEST_DIR is required")
+	}
+	p, err := plugin.Load(root, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	info := p.Info()
+	if len(info.SettingsActions) != 1 || info.SettingsActions[0].Title != "界面增强" {
+		t.Fatal("real manifest lacks the settings action")
+	}
+	a := newTestApp()
+	previousLibrary, previousRoute := a.library, a.route
+	lib := addFake(a, p)
+	lib.accountAsked = true
+	a.settingsPage = "plugins"
+	ch := posts(a)
+	view := ui.NewTester(a.settingsView, 780, 1100)
+	view.Frame()
+	if _, ok := view.Find("界面增强"); !ok {
+		t.Fatal("settings button not rendered")
+	}
+	if dir := os.Getenv("STYLE_ENTRY_EVIDENCE"); dir != "" {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		saveFrame(t, dir, "settings-plugin-action.png", view.Image())
+	}
+	page := info.SettingsActions[0].Page
+	for i := 0; i < 2; i++ {
+		if err := view.Click("界面增强"); err != nil {
+			t.Fatal(err)
+		}
+		until(t, ch, func() bool { d := lib.browses[page]; return d != nil && !d.loading })
+		view.Frame()
+		d := lib.browses[page]
+		if d.err != "" || d.page == nil || d.page.Title == "" {
+			t.Fatalf("actual plugin action failed: %s", d.err)
+		}
+		if a.library != previousLibrary || a.route != previousRoute {
+			t.Fatal("settings action changed the active source or navigation")
+		}
+		if lib.account != nil {
+			t.Fatal("settings action required/imported an account")
+		}
+	}
+	a.libs = a.libs[:len(a.libs)-1]
+	view.Frame()
+	if _, ok := view.Find("界面增强"); ok {
+		t.Fatal("disabled plugin still exposes its action")
+	}
+	if dir := os.Getenv("STYLE_ENTRY_EVIDENCE"); dir != "" {
+		if err := os.WriteFile(filepath.Join(dir, "settings-entry-result.json"), []byte("{\"ok\":true,\"actualPlugin\":true,\"accountImported\":false,\"inactiveSourceAction\":true,\"repeat\":true,\"disabledHidden\":true}\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

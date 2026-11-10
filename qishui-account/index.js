@@ -4,7 +4,7 @@ const ORIGIN = 'https://api.qishui.com';
 const SESSION = 'qishui-session-v1';
 const DIAGNOSTIC = 'qishui-login-diagnostic-v1';
 const DEVICE = 'qishui-device-v1';
-const VERSION = '0.6.4';
+const VERSION = '0.6.5';
 const UA = {
   windows: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   darwin: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -981,7 +981,7 @@ function appearancePage(opened = false) {
   return {
     title: '小图标样式增强',
     description: supported
-      ? (opened ? '安装助手已打开。请在助手中查看检查结果；只有确认安装才会关闭并重启 MyGo。' : '为原版 MyGo 添加小图标听歌模式。安装组件已随插件提供，无需另外下载安装包。') + '\n仅支持已验证的 Windows MyGo 0.1.22；安装前请保存设置并暂停播放。原程序和已保存的数据会备份，账号与插件保留。'
+      ? (opened ? '安装助手已打开。请在助手中查看检查结果；只有确认安装才会关闭并重启 MyGo。' : '为原版 MyGo 添加小图标听歌模式。安装组件已随插件提供，无需另外下载安装包。') + '\n支持官方 Windows x64 MyGo 0.1.22 与已验证的旧增强构建。安装后，“设置 → 插件 → 汽水音乐”中会提供“界面增强”按钮；原版首次仍从此处启用。安装前请保存设置并暂停播放，原程序和已保存的数据会备份，账号与插件保留。'
       : '此样式安装助手目前仅支持 Windows x64。Mac 可继续使用汽水插件；此处不会修改播放器。',
     sections: supported ? [{ links: [{ title: opened ? '再次打开安装助手' : '打开样式安装助手', subtitle: '检查版本、确认安装或查看已安装状态。', page: 'appearance/open/' + next, reload: true }] }] : [],
   };

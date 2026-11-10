@@ -31,6 +31,16 @@
  }
  
  // NavItem is an entry of the sidebar: a Browse page of the source's own, by
+@@ -323,6 +333,9 @@
+ 	Version  string    `json:"version,omitempty"`
+ 	Playback Playback  `json:"playback"`
+ 	Settings []Setting `json:"settings,omitempty"`
++	// SettingsActions are explicit plugin actions in the plugin management page.
++	// Like browse links, they run only after the listener clicks them.
++	SettingsActions []Link `json:"settingsActions,omitempty"`
+ 	// Navigation is the sidebar while the source is active, in this order. With
+ 	// none, the sidebar has an entry for each of the app's pages the source can do.
+ 	Navigation []NavItem `json:"navigation,omitempty"`
 --- a/internal/app/ui_browse.go
 +++ b/internal/app/ui_browse.go
 @@ -139,12 +139,16 @@
@@ -329,3 +339,57 @@
 +		a.playStation(a.library, st)
 +	}
 +}
+--- a/internal/app/ui_settings.go
++++ b/internal/app/ui_settings.go
+@@ -523,6 +523,9 @@
+ 		for _, st := range lib.src.Info().Settings {
+ 			text += " " + st.Label + " " + st.Help
+ 		}
++		for _, action := range lib.src.Info().SettingsActions {
++			text += " " + action.Title + " " + action.Subtitle
++		}
+ 		block(text, func() { a.pluginSettings(c.Key(lib.id), lib, p) })
+ 	}
+ }
+@@ -639,6 +642,28 @@
+ 		if g, ok := lib.src.(guarded); ok {
+ 			a.pluginPermissions(c.Key("permissions"), lib, g, p)
+ 		}
++		if lib.can("browse") {
++			for _, action := range info.SettingsActions {
++				if action.Page == "" || action.Title == "" {
++					continue
++				}
++				ui.Column(c.Key("action-" + action.Page)).Gap(4).Children(func() {
++					d := lib.browses[action.Page]
++					busy := d != nil && d.loading
++					if ui.Button(c.Key("open"), action.Title).Disabled(busy).Clicked() {
++						// The existing browse path preserves process permission checks
++						// and error handling without switching the active music source.
++						a.loadBrowse(lib, action.Page, true)
++					}
++					if action.Subtitle != "" {
++						ui.Text(c, action.Subtitle).FontSize(11.5).TextColor(p.muted).LineHeight(1.4)
++					}
++					if d != nil && d.err != "" {
++						ui.Text(c, d.err).FontSize(11.5).TextColor(p.accent).LineHeight(1.4)
++					}
++				})
++			}
++		}
+ 		for _, st := range info.Settings {
+ 			a.sourceSetting(c.Key(st.Key), lib, st, p)
+ 		}
+--- a/internal/plugin/plugin.go
++++ b/internal/plugin/plugin.go
+@@ -653,6 +653,10 @@
+ 	for i, st := range info.Settings {
+ 		info.Settings[i].Label, info.Settings[i].Help = p.t(st.Label), p.t(st.Help)
+ 	}
++	info.SettingsActions = slices.Clone(info.SettingsActions)
++	for i, action := range info.SettingsActions {
++		info.SettingsActions[i].Title, info.SettingsActions[i].Subtitle = p.t(action.Title), p.t(action.Subtitle)
++	}
+ 	info.Navigation = slices.Clone(info.Navigation)
+ 	for i, n := range info.Navigation {
+ 		info.Navigation[i].Title = p.t(n.Title)

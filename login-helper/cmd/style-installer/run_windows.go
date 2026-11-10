@@ -152,21 +152,21 @@ func run(pid uint32, ack func(string) error) error {
 	if err := ack("ready"); err != nil {
 		return err
 	}
-	if hash == m.PayloadHash || hash == pilotHash {
-		dialog("当前 MyGo 已支持小图标听歌模式，无需重复安装。\n\n以后可直接更新汽水插件。MyGo 官方更新可能覆盖这项增强。", false)
+	if hash == m.PayloadHash {
+		dialog("当前 MyGo 已支持小图标听歌模式与插件设置页入口，无需重复安装。\n\n可在“设置 → 插件 → 汽水音乐”中使用“界面增强”。MyGo 官方更新可能覆盖这项增强。", false)
 		return nil
 	}
-	if hash != stockHash {
-		dialog("当前 MyGo 程序不属于已验证的 0.1.22 构建，暂不能安装此增强。\n\n没有修改程序或账号数据。", false)
+	if !supportedHash(hash) {
+		dialog("当前 MyGo 构建暂未支持，未修改程序或账号数据。\n\n程序位置："+parent.path+"\nSHA256："+hash+"\n\n请提供版本号和此构建指纹，以便核对兼容性。仅版本号相同不足以确认可以覆盖。", false)
 		return nil
 	}
-	if !dialog("将为 MyGo Music 0.1.22 安装小图标听歌模式。\n\n安装会备份当前程序和已保存的数据，关闭并重启 MyGo，只更新主程序文件。\n请先保存正在修改的设置并暂停播放。\n\n是否安装并重启？", true) {
+	if !dialog("将为 MyGo Music 0.1.22 安装小图标听歌模式和插件设置页入口。\n\n安装会备份当前程序和已保存的数据，关闭并重启 MyGo，只更新主程序文件。\n请先保存正在修改的设置并暂停播放。\n\n是否安装并重启？", true) {
 		return nil
 	}
 	if !decision.CompareAndSwap(0, 1) {
 		return nil
 	}
-	result := install(pid, parent, root, m)
+	result := install(pid, parent, root, m, hash)
 	time.AfterFunc(2*time.Minute, func() { os.Exit(0) })
 	if result.OK {
 		dialog("安装完成，MyGo 已从原路径重启。\n账号与插件数据已保留，原程序已备份。", false)
@@ -188,6 +188,7 @@ type receipt struct {
 	Stage              string `json:"stage"`
 	Target             string `json:"targetExe"`
 	Hash               string `json:"installedSha256,omitempty"`
+	OriginalHash       string `json:"originalSha256,omitempty"`
 	Backup             string `json:"backupExe,omitempty"`
 	PID                int    `json:"newProcessId,omitempty"`
 	DataPreserved      bool   `json:"existingFilesUnchangedBeforeRestart"`
@@ -292,8 +293,11 @@ func replace(target, source, backup string) error {
 	return nil
 }
 
-func install(pid uint32, initial *instance, root string, m manifest) (result receipt) {
-	result = receipt{Target: initial.path, Stage: "检查程序"}
+func install(pid uint32, initial *instance, root string, m manifest, originalHash string) (result receipt) {
+	result = receipt{Target: initial.path, Stage: "检查程序", OriginalHash: originalHash}
+	if !supportedHash(originalHash) {
+		return result
+	}
 	config, err := os.UserConfigDir()
 	if err != nil {
 		return result
@@ -321,7 +325,7 @@ func install(pid uint32, initial *instance, root string, m manifest) (result rec
 		return result
 	}
 	actual, err := hashFile(initial.path)
-	if err != nil || actual != stockHash {
+	if err != nil || actual != originalHash {
 		return result
 	}
 	files, err := snapshotFiles(dataRoot, initial.path)
@@ -358,7 +362,7 @@ func install(pid uint32, initial *instance, root string, m manifest) (result rec
 			}
 		}
 	}
-	if hash, err := hashFile(result.Backup); err != nil || hash != stockHash {
+	if hash, err := hashFile(result.Backup); err != nil || hash != originalHash {
 		return result
 	}
 	sourceSnapshot := filepath.Join(private, "corresponding-source.zip")
@@ -380,7 +384,7 @@ func install(pid uint32, initial *instance, root string, m manifest) (result rec
 	if !initial.same(process) || !unchanged(files) {
 		return result
 	}
-	if hash, err := hashFile(initial.path); err != nil || hash != stockHash {
+	if hash, err := hashFile(initial.path); err != nil || hash != originalHash {
 		return result
 	}
 	replaced := false
@@ -426,7 +430,7 @@ func install(pid uint32, initial *instance, root string, m manifest) (result rec
 				return
 			}
 		}
-		if hash, err := hashFile(initial.path); err != nil || hash != stockHash {
+		if hash, err := hashFile(initial.path); err != nil || hash != originalHash {
 			return
 		}
 		result.FileRestored = true

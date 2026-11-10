@@ -1,12 +1,15 @@
 {
   "id": "qishui-account",
   "name": "汽水音乐",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "main": "index.js",
   "playback": "stream",
   "permissions": { "network": ["api.qishui.com"], "process": true },
   "settings": [
     { "key": "nodePath", "label": "Node.js 路径", "help": "可选。填写 node.exe 或 node 的完整路径，无需加引号；留空自动查找。需要 Node.js 24 或更新版本。" }
+  ],
+  "settingsActions": [
+    { "title": "界面增强", "subtitle": "检查或更新小图标样式；安装和重启前会另行确认。", "page": "appearance/open/settings" }
   ],
   "navigation": [
     { "builtin": "home", "title": "推荐" },

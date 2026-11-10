@@ -11,9 +11,9 @@
 
 ## 插件内的小图标安装助手
 
-0.6.4 的 Windows 插件包已自带样式组件。普通使用者从插件侧栏「界面增强」打开原生助手即可，无需自行应用源码补丁或运行脚本。助手只支持已验证的 v0.1.22 构建，并在确认后备份、更新单个 EXE 和重启；账号与插件数据保留。已增强的程序不会重复安装，未知构建不会被降级或覆盖。
+0.6.5 的 Windows 插件包已自带样式组件。普通使用者从插件侧栏「界面增强」打开原生助手即可，无需自行应用源码补丁或运行脚本。助手只支持已验证的 v0.1.22 构建，并在确认后备份、更新单个 EXE 和重启；账号与插件数据保留。当前增强版本不会重复安装，0.6.4 旧增强版可确认升级，未知构建不会被降级或覆盖。
 
-`mygo-0.1.22-layout-only.patch` 是此组件的五文件源码补丁，仅包含 compact、mode-buttons、mode-covers 和刷新操作布局，不包含下述 Windows 任务栏、登录或歌词改动。构建方式为 `node scripts/build-style-player.mjs /path/to/unmodified-mygo-v0.1.22`，生成的程序和对应源码由插件打包器收录。
+`mygo-0.1.22-layout-only.patch` 是此组件的七文件源码补丁，包含 compact、mode-buttons、mode-covers、刷新操作布局及插件设置页动作入口，不包含下述 Windows 任务栏、登录或歌词改动。构建方式为 `node scripts/build-style-player.mjs /path/to/unmodified-mygo-v0.1.22`，生成的程序和对应源码由插件打包器收录。
 
 ## 可见变化
 
@@ -48,3 +48,5 @@ Mac arm64 可用 `go tool mygo build -platform darwin/arm64 -sign - -skip-dmg -s
 这不是 MyGo 官方发行版。自动更新仍然保留，官方更新可能覆盖补丁，届时需重新移植。
 
 上游项目：[egoist/mygo-music](https://github.com/egoist/mygo-music/tree/v0.1.22)。上游 AGPL v3 原文见 [LICENSE-MyGo](LICENSE-MyGo)。
+
+0.6.5 增加 `music.Info.settingsActions`：启用的插件可声明明确点击后调用的 Browse 动作，设置页沿用正常程序权限与错误处理，不切换当前音源；插件停用时不显示按钮。原版宿主忽略此字段，首次保留侧栏安装入口。
