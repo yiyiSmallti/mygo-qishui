@@ -18,16 +18,18 @@ import (
 const officialHash = "9e49bc806c3cff513c628fe40e94285c5388634e44bb333a4c21dc0dff555482"
 const previousVerifiedHash = "60208d6d3e647e8f8e8c1e1157657402032e9ce09553e0319a0a40823809284a"
 const previousLayoutHash = "39f1383d6858cfaeeb305b722ed8529d364463495468b9c87d7cf209aef6ce28"
+const previousSettingsHash = "6c916f49427988b5e5c368081f358c1914ea59692a588ea9bea5738c5a973096"
 
 func supportedHash(hash string) bool {
-	return hash == officialHash || hash == previousVerifiedHash || hash == previousLayoutHash
+	return hash == officialHash || hash == previousVerifiedHash || hash == previousLayoutHash || hash == previousSettingsHash
 }
 
 type manifest struct {
-	Schema      int    `json:"schema"`
-	BaseVersion string `json:"baseVersion"`
-	PayloadHash string `json:"payloadSha256"`
-	SourceHash  string `json:"sourceSha256"`
+	Schema      int      `json:"schema"`
+	BaseVersion string   `json:"baseVersion"`
+	PayloadHash string   `json:"payloadSha256"`
+	SourceHash  string   `json:"sourceSha256"`
+	Components  []string `json:"components"`
 }
 
 func hashFile(path string) (string, error) {
@@ -49,8 +51,17 @@ func loadManifest(root string) (manifest, error) {
 	if err != nil || len(b) > 8192 {
 		return m, errors.New("payload")
 	}
-	if json.Unmarshal(b, &m) != nil || m.Schema != 1 || m.BaseVersion != "0.1.22" {
+	if json.Unmarshal(b, &m) != nil || m.Schema != 2 || m.BaseVersion != "0.1.22" {
 		return m, errors.New("payload")
+	}
+	expected := []string{"listening-layout", "settings-entry", "taskbar-player"}
+	if len(m.Components) != len(expected) {
+		return m, errors.New("payload")
+	}
+	for i, name := range expected {
+		if m.Components[i] != name {
+			return m, errors.New("payload")
+		}
 	}
 	for _, item := range []struct{ name, hash string }{{"layout-player.exe", m.PayloadHash}, {"layout-corresponding-source.zip", m.SourceHash}} {
 		if len(item.hash) != 64 || strings.Trim(item.hash, "0123456789abcdef") != "" {

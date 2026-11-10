@@ -23,7 +23,7 @@ try {
     const name = basename(path);
     return !name.startsWith('.') && !['node_modules', 'dist', 'cmd', 'plugin-data', 'media-cache', 'artifacts'].includes(name) && !name.startsWith('build');
   } });
-  const patch = join(root, 'patches/mygo-0.1.22-layout-only.patch');
+  const patch = join(root, 'patches/mygo-0.1.22-enhancements.patch');
   run('git', ['apply', '--check', patch], source);
   run('git', ['apply', patch], source);
   const build = join(temporary, 'build');

@@ -1,7 +1,7 @@
 {
   "id": "qishui-account",
   "name": "汽水音乐",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "main": "index.js",
   "playback": "stream",
   "permissions": { "network": ["api.qishui.com"], "process": true },
@@ -9,7 +9,7 @@
     { "key": "nodePath", "label": "Node.js 路径", "help": "可选。填写 node.exe 或 node 的完整路径，无需加引号；留空自动查找。需要 Node.js 24 或更新版本。" }
   ],
   "settingsActions": [
-    { "title": "界面增强", "subtitle": "检查或更新小图标样式；安装和重启前会另行确认。", "page": "appearance/open/settings" }
+    { "title": "界面增强", "subtitle": "管理听歌模式和任务栏播放条；安装或更新前会另行确认。", "page": "appearance/open/settings" }
   ],
   "navigation": [
     { "builtin": "home", "title": "推荐" },
@@ -17,6 +17,6 @@
     { "builtin": "liked", "title": "喜欢的音乐" },
     { "page": "library", "title": "音乐库", "icon": "note" },
     { "builtin": "savedAlbums", "title": "收藏专辑" },
-    { "page": "appearance", "title": "界面增强", "icon": "star" }
+    { "page": "appearance", "title": "界面增强", "icon": "star", "fallbackForSettingsAction": "appearance/open/settings" }
   ]
 }

@@ -22,7 +22,7 @@ async function main() {
     });
     const result = await new Promise((resolve, reject) => {
       let output = '';
-      timer = setTimeout(() => reject(new Error('timeout')), 12000);
+      timer = setTimeout(() => reject(new Error('timeout')), 25000);
       child.once('error', reject);
       child.stdout.on('data', chunk => {
         output += chunk;

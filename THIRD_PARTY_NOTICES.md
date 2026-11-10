@@ -22,6 +22,8 @@
 
 `qishui-account/vendor/react-18.3.1/` 包含官方 npm `react@18.3.1` 和 `react-dom@18.3.1` 的未修改 production UMD 文件，以满足官方二次验证组件的外部依赖及 legacy DOM API。两者采用 MIT 许可，原文、来源和文件 SHA-256 均保留在该目录中。
 
-## 可选样式增强主程序
+## 可选增强主程序与管理窗口
 
-0.6.5 的 Windows 插件包可选安装基于 MyGo Music v0.1.22 的布局增强程序。其完整对应源码和原 AGPL v3 许可随包位于 `native/layout-corresponding-source.zip`，布局及插件设置页入口补丁位于 `patches/mygo-0.1.22-layout-only.patch`。该组件不包含任务栏或登录补丁。原生安装助手使用 Go 标准库及 Windows API；其源码随本项目提供。
+0.6.6 的 Windows 插件包可选安装基于 MyGo Music v0.1.22 的完整增强程序，包含布局、设置页动作和 Windows 任务栏组件，不包含登录补丁。完整对应源码和原 AGPL v3 许可随包位于 `native/layout-corresponding-source.zip`，补丁位于 `patches/mygo-0.1.22-enhancements.patch`。原生管理窗口沿用 MyGo UI；其源码随本项目提供。
+
+新增 UI 依赖为 `github.com/go-text/typesetting v0.3.5`（Unlicense OR BSD-3-Clause）和 `golang.org/x/image v0.46.0`（BSD）；任务栏使用 `golang.org/x/sys v0.49.0`（BSD）。原始许可分别保存在 `native-licenses/go-text-typesetting`、`native-licenses/x-image-BSD` 和 `native-licenses/x-sys-BSD`。

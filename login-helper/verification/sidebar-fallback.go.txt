@@ -1,0 +1,37 @@
+//go:build enhancementqa
+
+package app
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/egoist/mygo/ui"
+	"mygo-music/internal/plugin"
+)
+
+// The same actual-plugin check runs against original and enhanced host sources.
+func TestEnhancementSidebarCompatibility(t *testing.T) {
+	p, err := plugin.Load(os.Getenv("ENHANCEMENT_PLUGIN_DIR"), t.TempDir())
+	if err != nil { t.Fatal(err) }
+	defer p.Close()
+	a := newTestApp()
+	lib := addFake(a, p); lib.accountAsked = true
+	a.library = lib
+	posts(a)
+	view := ui.NewTester(a.sidebar, 232, 780)
+	view.Frame()
+	_, shows := view.Find("界面增强")
+	wanted := os.Getenv("ENHANCEMENT_EXPECT_FALLBACK") == "true"
+	if shows != wanted { t.Fatalf("sidebar fallback: got %v, wanted %v", shows, wanted) }
+	for _, name := range []string{"听歌模式", "音乐库"} {
+		if _, ok := view.Find(name); !ok { t.Fatalf("ordinary navigation %s was removed", name) }
+	}
+	if dir := os.Getenv("ENHANCEMENT_SIDEBAR_EVIDENCE"); dir != "" {
+		if err := os.MkdirAll(dir, 0700); err != nil { t.Fatal(err) }
+		b, _ := json.Marshal(map[string]any{"ok": true, "actualPlugin": true, "sidebarBootstrapShown": shows, "ordinaryNavigationKept": true})
+		if err := os.WriteFile(filepath.Join(dir, "sidebar-result.json"), b, 0600); err != nil { t.Fatal(err) }
+	}
+}

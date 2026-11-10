@@ -103,7 +103,7 @@ func run(root, native, style, out string) error {
 				present[f.Name] = true
 			}
 			archive.Close()
-			for _, name := range []string{"mygo-music/LICENSE", "mygo-music/internal/app/ui_listening_modes.go"} {
+			for _, name := range []string{"mygo-music/LICENSE", "mygo-music/internal/app/ui_listening_modes.go", "mygo-music/internal/app/ui_settings.go", "mygo-music/internal/app/ui_main.go", "mygo-music/internal/app/taskbar_windows.go", "mygo-music/internal/app/taskbar_widget_view_windows.go", "mygo-music/internal/app/taskbar_probe_windows.go"} {
 				if !present[name] {
 					return fmt.Errorf("layout source archive lacks %s", name)
 				}
@@ -123,7 +123,7 @@ func run(root, native, style, out string) error {
 			if !valid {
 				return fmt.Errorf("wrong style installer architecture")
 			}
-			layoutManifest, _ = json.Marshal(map[string]any{"schema": 1, "baseVersion": "0.1.22", "payloadSha256": hex.EncodeToString(playerHash[:]), "sourceSha256": hex.EncodeToString(sourceHash[:])})
+			layoutManifest, _ = json.Marshal(map[string]any{"schema": 2, "baseVersion": "0.1.22", "components": []string{"listening-layout", "settings-entry", "taskbar-player"}, "payloadSha256": hex.EncodeToString(playerHash[:]), "sourceSha256": hex.EncodeToString(sourceHash[:])})
 		}
 		archive := filepath.Join(out, "plugin-"+platform+".zip")
 		file, err := os.Create(archive)

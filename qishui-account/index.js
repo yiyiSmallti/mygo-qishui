@@ -4,7 +4,7 @@ const ORIGIN = 'https://api.qishui.com';
 const SESSION = 'qishui-session-v1';
 const DIAGNOSTIC = 'qishui-login-diagnostic-v1';
 const DEVICE = 'qishui-device-v1';
-const VERSION = '0.6.5';
+const VERSION = '0.6.6';
 const UA = {
   windows: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   darwin: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -979,11 +979,11 @@ function appearancePage(opened = false) {
   const supported = host.platform === 'windows' && host.arch === 'amd64';
   const next = Date.now().toString(36) + '-' + (++appearanceSequence).toString(36);
   return {
-    title: '小图标样式增强',
+    title: '界面增强',
     description: supported
-      ? (opened ? '安装助手已打开。请在助手中查看检查结果；只有确认安装才会关闭并重启 MyGo。' : '为原版 MyGo 添加小图标听歌模式。安装组件已随插件提供，无需另外下载安装包。') + '\n支持官方 Windows x64 MyGo 0.1.22 与已验证的旧增强构建。安装后，“设置 → 插件 → 汽水音乐”中会提供“界面增强”按钮；原版首次仍从此处启用。安装前请保存设置并暂停播放，原程序和已保存的数据会备份，账号与插件保留。'
+      ? (opened ? '增强管理窗口已打开。请在窗口中查看组件状态；只有确认安装才会关闭并重启 MyGo。' : '增强包已随插件提供，包含听歌模式、插件设置页入口和任务栏播放条。') + '\n支持官方 Windows x64 MyGo 0.1.22 与已验证的旧增强构建。安装后请在“设置 → 插件 → 汽水音乐”中使用“界面增强”，侧栏重复入口会隐藏；原版首次仍从此处启用。安装前请保存设置并暂停播放，原程序和已保存的数据会备份，账号与插件保留。'
       : '此样式安装助手目前仅支持 Windows x64。Mac 可继续使用汽水插件；此处不会修改播放器。',
-    sections: supported ? [{ links: [{ title: opened ? '再次打开安装助手' : '打开样式安装助手', subtitle: '检查版本、确认安装或查看已安装状态。', page: 'appearance/open/' + next, reload: true }] }] : [],
+    sections: supported ? [{ links: [{ title: opened ? '再次打开增强管理' : '打开增强管理', subtitle: '检查版本、确认安装或查看已安装状态。', page: 'appearance/open/' + next, reload: true }] }] : [],
   };
 }
 
@@ -995,12 +995,12 @@ async function openAppearanceInstaller() {
     child.write(JSON.stringify({ type: 'open-layout-installer' }) + '\n');
     child.closeStdin();
     const line = await Promise.race([child.readLine(), new Promise((_, reject) => {
-      timer = setTimeout(() => reject(failure('样式安装助手启动超时，请重试。', 'setup')), 15000);
+      timer = setTimeout(() => reject(failure('增强管理窗口启动超时，请重试。', 'setup')), 30000);
     })]);
-    if (typeof line !== 'string' || line.length > 1024) throw failure('样式安装助手没有返回有效结果，请重新安装 Windows 插件包。', 'setup');
+    if (typeof line !== 'string' || line.length > 1024) throw failure('增强管理窗口没有返回有效结果，请重新安装 Windows 插件包。', 'setup');
     let value;
-    try { value = JSON.parse(line); } catch { throw failure('样式安装助手没有返回有效结果，请重新安装 Windows 插件包。', 'setup'); }
-    if (value.type !== 'ready' || !['ready', 'busy'].includes(value.status)) throw failure('样式安装助手未能启动，请重新安装完整的 Windows 插件包。', 'setup');
+    try { value = JSON.parse(line); } catch { throw failure('增强管理窗口没有返回有效结果，请重新安装 Windows 插件包。', 'setup'); }
+    if (value.type !== 'ready' || !['ready', 'busy'].includes(value.status)) throw failure('增强管理窗口未能启动，请重新安装完整的 Windows 插件包。', 'setup');
     complete = true;
     return appearancePage(true);
   } finally {

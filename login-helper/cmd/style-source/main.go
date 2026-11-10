@@ -1,4 +1,4 @@
-// Archives the complete layout player's corresponding source with fixed modes.
+// Archives the complete enhanced player's corresponding source with fixed modes.
 package main
 
 import (
@@ -27,7 +27,7 @@ func archive(root, out string) error {
 	if root == "" || out == "" {
 		return fmt.Errorf("root and out are required")
 	}
-	for _, name := range []string{"LICENSE", "go.mod", "internal/app/ui_listening_modes.go"} {
+	for _, name := range []string{"LICENSE", "go.mod", "internal/app/ui_listening_modes.go", "internal/app/ui_settings.go", "internal/app/ui_main.go", "internal/app/taskbar_windows.go", "internal/app/taskbar_widget_view_windows.go", "internal/app/taskbar_probe_windows.go"} {
 		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
 			return err
 		}

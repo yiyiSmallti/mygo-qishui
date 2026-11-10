@@ -22,7 +22,6 @@ import (
 
 var (
 	kernel          = syscall.NewLazyDLL("kernel32.dll")
-	user32          = syscall.NewLazyDLL("user32.dll")
 	advapi          = syscall.NewLazyDLL("advapi32.dll")
 	queryImage      = kernel.NewProc("QueryFullProcessImageNameW")
 	replaceFile     = kernel.NewProc("ReplaceFileW")
@@ -30,7 +29,6 @@ var (
 	createDirectory = kernel.NewProc("CreateDirectoryW")
 	convertSDDL     = advapi.NewProc("ConvertStringSecurityDescriptorToSecurityDescriptorW")
 	localFree       = kernel.NewProc("LocalFree")
-	messageBox      = user32.NewProc("MessageBoxW")
 )
 
 func wide(s string) *uint16 { p, _ := syscall.UTF16PtrFromString(s); return p }
@@ -84,15 +82,6 @@ func plainPath(path string) error {
 			return nil
 		}
 	}
-}
-
-func dialog(text string, confirm bool) bool {
-	flags := uintptr(0x40) // informational, OK
-	if confirm {
-		flags = 0x03 | 0x30 | 0x200
-	} // Yes/No/Cancel, default Cancel
-	result, _, _ := messageBox.Call(0, uintptr(unsafe.Pointer(wide(text))), uintptr(unsafe.Pointer(wide("汽水音乐 · 小图标样式增强"))), flags)
-	return result == 6
 }
 
 func run(pid uint32, ack func(string) error) error {
@@ -149,38 +138,16 @@ func run(pid uint32, ack func(string) error) error {
 			}
 		}
 	}()
-	if err := ack("ready"); err != nil {
-		return err
-	}
+	view := &enhancementView{state: "unsupported", diagnostics: "程序位置：" + parent.path + "\nSHA256：" + hash + "\n支持版本：Windows x64 MyGo 0.1.22"}
 	if hash == m.PayloadHash {
-		dialog("当前 MyGo 已支持小图标听歌模式与插件设置页入口，无需重复安装。\n\n可在“设置 → 插件 → 汽水音乐”中使用“界面增强”。MyGo 官方更新可能覆盖这项增强。", false)
-		return nil
+		view.state = "installed"
+	} else if supportedHash(hash) {
+		view.state = "available"
+		view.upgrade = hash != officialHash
 	}
-	if !supportedHash(hash) {
-		dialog("当前 MyGo 构建暂未支持，未修改程序或账号数据。\n\n程序位置："+parent.path+"\nSHA256："+hash+"\n\n请提供版本号和此构建指纹，以便核对兼容性。仅版本号相同不足以确认可以覆盖。", false)
-		return nil
-	}
-	if !dialog("将为 MyGo Music 0.1.22 安装小图标听歌模式和插件设置页入口。\n\n安装会备份当前程序和已保存的数据，关闭并重启 MyGo，只更新主程序文件。\n请先保存正在修改的设置并暂停播放。\n\n是否安装并重启？", true) {
-		return nil
-	}
-	if !decision.CompareAndSwap(0, 1) {
-		return nil
-	}
-	result := install(pid, parent, root, m, hash)
-	time.AfterFunc(2*time.Minute, func() { os.Exit(0) })
-	if result.OK {
-		dialog("安装完成，MyGo 已从原路径重启。\n账号与插件数据已保留，原程序已备份。", false)
-	} else {
-		text := "安装未完成（" + result.Stage + "），请检查后重试。"
-		if result.RolledBack {
-			text += "\n已恢复并重启原程序。"
-		}
-		if result.Backup != "" {
-			text += "\n备份位置：" + filepath.Dir(result.Backup)
-		}
-		dialog(text, false)
-	}
-	return nil
+	return showEnhancementManager(view, ack, &decision, func() receipt {
+		return install(pid, parent, root, m, hash)
+	})
 }
 
 type receipt struct {

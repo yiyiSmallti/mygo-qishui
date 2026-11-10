@@ -1,0 +1,3213 @@
+--- a/go.mod
++++ b/go.mod
+@@ -26,5 +26,5 @@
+ 	github.com/mewpkg/term v0.0.0-20241026122259-37a80af23985 // indirect
+ 	github.com/tphakala/simd v1.11.0 // indirect
+ 	golang.org/x/net v0.59.0 // indirect
+-	golang.org/x/sys v0.48.0 // indirect
++	golang.org/x/sys v0.49.0 // indirect
+ )
+--- a/go.sum
++++ b/go.sum
+@@ -42,6 +42,8 @@
+ golang.org/x/sys v0.0.0-20220712014510-0a85c31ab51e/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+ golang.org/x/sys v0.48.0 h1:bbX/i/6MgT9BVLM9RT1thmxL04yeTAhbEz4SyadbXoo=
+ golang.org/x/sys v0.48.0/go.mod h1:hNLxWAXmnKAxqDtdwIYC4bM9oQPEecfsnNMuSxOs3og=
++golang.org/x/sys v0.49.0 h1:XbzkgYJHdqh/8m2Uu0W/dQv8nktxx4BFHp1M0gROTXA=
++golang.org/x/sys v0.49.0/go.mod h1:hNLxWAXmnKAxqDtdwIYC4bM9oQPEecfsnNMuSxOs3og=
+ golang.org/x/text v0.43.0 h1:1QivrlhwAsnMOcqgOdl9my7s9OyZl8O5/UGUTJVXoWc=
+ golang.org/x/text v0.43.0/go.mod h1:hbSIYA/amXcRXTFSZqh8tWHEoqRvvbKPJ2uz/KU+a+s=
+ rsc.io/qr v0.2.0 h1:6vBLea5/NRMVTz8V66gipeLycZMl/+UlFmk8DvqQ6WY=
+--- a/internal/app/app.go
++++ b/internal/app/app.go
+@@ -53,12 +53,14 @@
+ // app is the state both windows show. Everything in it is read and changed
+ // on the main thread: by the views, and by goroutines through post.
+ type app struct {
+-	win   *mygo.Window
+-	notch *notch
+-	tray  *mygo.Tray // the icon in the menu bar or notification area, while it shows
+-	art   *artCache
+-	pl    *player.Player
+-	pal   palette
++	win            *mygo.Window
++	notch          *notch
++	tray           *mygo.Tray      // the icon in the menu bar or notification area, while it shows
++	taskbar        taskbarControls // Windows' persistent taskbar player
++	taskbarGesture taskbarWidgetGesture
++	art            *artCache
++	pl             *player.Player
++	pal            palette
+ 
+ 	// libs are the sources, the built-in one first, and what the app has of
+ 	// each. The active one's is embedded: a.mine is what the active source
+@@ -188,6 +190,7 @@
+ }
+ 
+ func (a *app) redraw() {
++	a.syncTaskbar()
+ 	if a.win != nil {
+ 		a.win.Invalidate()
+ 	}
+@@ -352,6 +355,7 @@
+ 		a.pl.Changed = func() {
+ 			a.keepSession()
+ 			a.syncCaptions()
++			a.syncTaskbar()
+ 		}
+ 		a.volume = a.settings.Volume
+ 		a.pl.SetVolume(a.volume)
+@@ -372,6 +376,7 @@
+ 			BackgroundColor:      "light-dark(#ffffff, #141416)",
+ 			Content:              ui.View(a.view),
+ 		})
++		a.installTaskbar()
+ 		a.setMenu()
+ 		a.boot()
+ 		// The notch player is macOS's, over its menu bar: elsewhere it would
+@@ -415,6 +420,7 @@
+ 	})
+ 	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) {
+ 		a.quitting = true
++		a.closeTaskbar()
+ 		a.settings.Volume = a.volume
+ 		a.settings.save()
+ 		a.saveSession()
+--- /dev/null
++++ b/internal/app/browse_actions_test.go
+@@ -0,0 +1,178 @@
++package app
++
++import (
++	"fmt"
++	"testing"
++
++	"github.com/egoist/mygo/ui"
++
++	"mygo-music/internal/music"
++)
++
++// Explicit reload actions fetch a fresh page on a second click; ordinary
++// navigation remains cached, and the first click never sends two requests.
++func TestBrowseLinkReloadAndCache(t *testing.T) {
++	for _, reload := range []bool{false, true} {
++		for _, cover := range []string{"", "cover:0"} {
++			t.Run(fmt.Sprintf("reload=%v/cover=%v", reload, cover != ""), func(t *testing.T) {
++				a, ch, asked := browseApp()
++				framesTracks(a)
++				a.home = &music.Browse{Sections: []music.Section{{Links: []music.Link{{Title: "Open picks", Page: "picks", ImageURL: cover, Reload: reload}}}}}
++				tt := ui.NewTester(a.view, 1180, 780)
++				tt.Frame()
++				if err := tt.Click("Open picks"); err != nil {
++					t.Fatal(err)
++				}
++				if got := wait(t, asked, "the first page"); got != "picks" {
++					t.Fatalf("asked %q", got)
++				}
++				runPost(t, ch)
++				if len(asked) != 0 {
++					t.Fatal("the first click sent a duplicate request")
++				}
++				tt.Key(0, ui.KeyBack)
++				tt.Frame()
++				if err := tt.Click("Open picks"); err != nil {
++					t.Fatal(err)
++				}
++				if a.route.id != "picks" || a.route.page != pageBrowse {
++					t.Fatalf("opened %+v", a.route)
++				}
++				if a.browses["picks"].loading != reload {
++					t.Fatalf("reload=%v loading=%v", reload, a.browses["picks"].loading)
++				}
++				if reload {
++					if got := wait(t, asked, "fresh picks"); got != "picks" {
++						t.Fatalf("asked %q", got)
++					}
++					runPost(t, ch)
++				}
++				if len(asked) != 0 {
++					t.Fatal("navigation sent an extra request")
++				}
++			})
++		}
++	}
++}
++
++// Replacing a cover with an action row preserves Tab/Enter navigation at
++// narrow widths, including a link whose description is much longer than it.
++func TestBrowseActionKeyboardNavigation(t *testing.T) {
++	a, ch, asked := browseApp()
++	link := music.Link{Title: "Library", Subtitle: "All saved music, followed artists, albums and recent listening", Page: "library"}
++	tt := ui.NewTester(func(c *ui.Context) {
++		a.pal = paletteFor(c.Theme())
++		ui.Column(c).Padding(12).Children(func() { a.browseAction(c, &link) })
++	}, 320, 120)
++	tt.Frame()
++	tt.Key(0, ui.KeyTab)
++	if !tt.Focused("Library") {
++		t.Fatal("Tab could not focus the action")
++	}
++	tt.Key(0, ui.KeyEnter)
++	if a.route.page != pageBrowse || a.route.id != "library" {
++		t.Fatalf("Enter opened %+v", a.route)
++	}
++	if wait(t, asked, "the library") != "library" {
++		t.Fatal("the wrong page was requested")
++	}
++	runPost(t, ch)
++}
++
++// Compact station shortcuts keep the same continuous radio feed for pointer
++// and keyboard activation; sizing the card must not turn it into plain browse.
++func TestCompactStationStartsRadio(t *testing.T) {
++	for _, keyboard := range []bool{false, true} {
++		t.Run(fmt.Sprintf("keyboard=%v", keyboard), func(t *testing.T) {
++			a, ch := radioApp()
++			st := a.stations[0]
++			asked := make(chan string, 8)
++			fake(a).stationNext = func(id string) ([]music.Track, error) {
++				asked <- id
++				return sourced(song("one", "One"), song("two", "Two"), song("three", "Three"), song("four", "Four"), song("five", "Five")), nil
++			}
++			tt := ui.NewTester(func(c *ui.Context) {
++				a.pal = paletteFor(c.Theme())
++				ui.Column(c).Padding(12).Children(func() { a.compactStationCard(c, &st) })
++			}, 320, 120)
++			if !keyboard {
++				// A narrow page wraps the third shortcut onto another list row;
++				// its click must still select that station, not the first one.
++				a.route = route{page: pageHome, src: "fake"}
++				a.home = &music.Browse{Sections: []music.Section{{Layout: "compact", Stations: []music.Station{
++					{ID: "other-one", Name: "Other one"}, {ID: "other-two", Name: "Other two"}, st,
++				}}}}
++				tt = ui.NewTester(a.view, 780, 900)
++			}
++			tt.Frame()
++			if keyboard {
++				tt.Key(0, ui.KeyTab)
++				tt.Key(0, ui.KeyEnter)
++			} else if err := tt.Click(st.Name); err != nil {
++				t.Fatal(err)
++			}
++			if id := wait(t, asked, "station feed"); id != st.ID {
++				t.Fatalf("requested station %q", id)
++			}
++			until(t, ch, func() bool { return a.pl.Radio() != "" })
++			if a.pl.Radio() != radioName("fake", &st) || a.pl.Current() == nil || a.pl.Current().ID != "one" {
++				t.Fatalf("radio %q current=%+v", a.pl.Radio(), a.pl.Current())
++			}
++		})
++	}
++}
++
++// Mixed artwork and action links retain their destinations and order instead
++// of being lost or duplicated when the grid breaks around an action row.
++func TestBrowseMixedLinksKeepNavigation(t *testing.T) {
++	for _, target := range []string{"Before", "Cover", "After"} {
++		t.Run(target, func(t *testing.T) {
++			a, ch, asked := browseApp()
++			framesTracks(a)
++			a.home = &music.Browse{Sections: []music.Section{{Links: []music.Link{
++				{Title: "Before", Page: "before"}, {Title: "Cover", Page: "cover", ImageURL: "cover:0"}, {Title: "After", Page: "after"},
++			}}}}
++			tt := ui.NewTester(a.view, 1000, 1100)
++			tt.Frame()
++			if err := tt.Click(target); err != nil {
++				t.Fatal(err)
++			}
++			id := wait(t, asked, "the linked page")
++			if a.route.page != pageBrowse || a.route.id != id {
++				t.Fatalf("opened %+v after requesting %q", a.route, id)
++			}
++			want := map[string]string{"Before": "before", "Cover": "cover", "After": "after"}[target]
++			if id != want {
++				t.Fatalf("clicked %s but requested %q", target, id)
++			}
++			runPost(t, ch)
++		})
++	}
++}
++
++// With MM_FRAMES set, save compact browse controls in both appearances at
++// desktop and narrow window widths, with real artwork kept as square cards.
++func TestBrowseCompactFrames(t *testing.T) {
++	dir := framesDir(t)
++	for _, width := range []int{1180, 820} {
++		for _, dark := range []bool{false, true} {
++			a := newTestApp()
++			a.account = &music.Account{ID: "listener", Name: "Alex"}
++			tracks := framesTracks(a)
++			a.home = &music.Browse{Sections: []music.Section{
++				{Title: "为你推荐", Subtitle: "根据你的听歌偏好，每次发现不一样的好歌", Tracks: tracks[:4], Links: []music.Link{{Title: "换一批推荐", Subtitle: "继续发现适合现在的音乐", Page: "refresh", Reload: true}}},
++				{Title: "听歌模式", Layout: "compact", Stations: []music.Station{
++					{ID: "daily", Name: "私人电台", Description: "跟随你的喜好，连续播放", ImageURL: "cover:0"},
++					{ID: "fresh", Name: "新发现", Description: "熟悉之外，也有心动的声音", ImageURL: "cover:1"},
++					{ID: "favorites", Name: "收藏漫游", Description: "从喜欢的歌曲继续听", ImageURL: "cover:2"},
++				}},
++				{Title: "精选歌单", Links: []music.Link{{Title: "夜晚散步", Subtitle: "放慢一点，听见城市", Page: "evening", ImageURL: "cover:0"}, {Title: "轻松专注", Subtitle: "让旋律陪你做好眼前的事", Page: "focus", ImageURL: "cover:1"}}},
++				{Links: []music.Link{{Title: "我的音乐库", Subtitle: "歌单、喜欢的歌曲和收藏", Page: "library"}}},
++			}}
++			tt := ui.NewTester(a.view, width, 1050)
++			tt.SetDark(dark)
++			settled(tt)
++			saveFrame(t, dir, fmt.Sprintf("browse-compact-%d-dark-%v.png", width, dark), tt.Image())
++		}
++	}
++}
+--- /dev/null
++++ b/internal/app/like_listener_test.go
+@@ -0,0 +1,38 @@
++package app
++
++import (
++	"errors"
++	"testing"
++
++	"mygo-music/internal/music"
++)
++
++// A completed heart click must not overwrite the next listener's heart or library.
++func TestLikeCompletionStaysWithItsListener(t *testing.T) {
++	for _, refused := range []bool{false, true} {
++		name := "accepted"
++		if refused {
++			name = "refused"
++		}
++		t.Run(name, func(t *testing.T) {
++			a := newTestApp()
++			ch := posts(a)
++			fake(a).like = func(string, bool) error {
++				if refused {
++					return errors.New("offline")
++				}
++				return nil
++			}
++			a.account = &music.Account{ID: "previous-listener"}
++			a.toggleLike(&music.Track{ID: "3"})
++			a.account = &music.Account{ID: "current-listener"}
++			a.liked = map[string]bool{"3": refused}
++			a.likedList = nil
++			a.toast = ""
++			runPost(t, ch)
++			if a.liked["3"] != refused || len(a.likedList) != 0 || a.toast != "" {
++				t.Fatal("the previous listener's response changed the current listener")
++			}
++		})
++	}
++}
+--- /dev/null
++++ b/internal/app/listening_modes_test.go
+@@ -0,0 +1,193 @@
++package app
++
++import (
++	"fmt"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/egoist/mygo/ui"
++
++	"mygo-music/internal/music"
++)
++
++// Both listening-mode styles start the chosen continuous feed when clicked
++// after wrapping onto another grid row or when activated with Tab/Enter.
++func TestListeningModeStartsRadio(t *testing.T) {
++	for _, layout := range []string{"mode-buttons", "mode-covers"} {
++		for _, keyboard := range []bool{false, true} {
++			t.Run(fmt.Sprintf("%s/keyboard=%v", layout, keyboard), func(t *testing.T) {
++				a, ch := radioApp()
++				st := a.stations[0]
++				st.Description = "Continue with songs chosen for this listening mode"
++				asked := make(chan string, 8)
++				fake(a).stationNext = func(id string) ([]music.Track, error) {
++					asked <- id
++					return sourced(song("one", "One"), song("two", "Two"), song("three", "Three"), song("four", "Four"), song("five", "Five")), nil
++				}
++				tt := ui.NewTester(func(c *ui.Context) {
++					a.pal = paletteFor(c.Theme())
++					ui.Column(c).Padding(12).Children(func() {
++						if layout == "mode-buttons" {
++							a.modeStationButton(c, &st)
++						} else {
++							a.modeStationCover(c, &st)
++						}
++					})
++				}, 320, 260)
++				if !keyboard {
++					a.route = route{page: pageBrowse, src: "fake", id: "listening"}
++					a.browses["listening"] = &browseData{at: time.Now(), page: &music.Browse{Title: "Listening modes", Sections: []music.Section{{Layout: layout, Stations: []music.Station{
++						{ID: "other-one", Name: "Other one"}, {ID: "other-two", Name: "Other two"}, st,
++					}}}}}
++					tt = ui.NewTester(a.view, 780, 900)
++				}
++				tt.Frame()
++				if keyboard {
++					tt.Key(0, ui.KeyTab)
++					if !tt.Focused(st.Name) {
++						t.Fatal("Tab did not focus the listening-mode card")
++					}
++					tt.Key(0, ui.KeyEnter)
++				} else if err := tt.Click(st.Name); err != nil {
++					t.Fatal(err)
++				}
++				if id := wait(t, asked, "listening-mode feed"); id != st.ID {
++					t.Fatalf("requested station %q", id)
++				}
++				until(t, ch, func() bool { return a.pl.Radio() != "" })
++				if a.pl.Radio() != radioName("fake", &st) || a.pl.Current() == nil || a.pl.Current().ID != "one" {
++					t.Fatalf("radio %q current=%+v", a.pl.Radio(), a.pl.Current())
++				}
++			})
++		}
++	}
++}
++
++// A page using mode-specific artwork still opens its full collection from
++// the section's See All action instead of starting or changing the radio.
++func TestListeningModesSeeAll(t *testing.T) {
++	a, ch, asked := browseApp()
++	a.home = &music.Browse{Sections: []music.Section{{Title: "Explore", Layout: "mode-covers", MorePage: "all-modes", Stations: []music.Station{{ID: "one", Name: "One"}}}}}
++	tt := ui.NewTester(a.view, 820, 780)
++	tt.Frame()
++	if err := tt.Click(T("See All")); err != nil {
++		t.Fatal(err)
++	}
++	if id := wait(t, asked, "the full modes page"); id != "all-modes" {
++		t.Fatalf("requested %q", id)
++	}
++	runPost(t, ch)
++	if a.route.id != "all-modes" || a.pl.Radio() != "" {
++		t.Fatalf("route %+v radio=%q", a.route, a.pl.Radio())
++	}
++}
++
++// With MM_FRAMES set, save the listening page in both themes and window
++// widths; optional MM_MODE_ICONS supplies real transparent plugin artwork.
++func TestListeningModesFrames(t *testing.T) {
++	dir := framesDir(t)
++	for _, width := range []int{1180, 820} {
++		for _, dark := range []bool{false, true} {
++			a := newTestApp()
++			framesTracks(a)
++			a.account = &music.Account{ID: "listener", Name: "Alex"}
++			commonNames := []string{"熟悉模式", "新鲜模式", "Chill 放松", "快乐时光", "动感健身", "夜晚", "治愈", "小酒馆"}
++			icons := []string{"familiar.png", "fresh.png", "scene-3.png", "scene-5.png", "scene-2.png", "scene-40.png", "scene-21.png", "scene-18.png"}
++			var common, explore []music.Station
++			for i, name := range commonNames {
++				st := music.Station{ID: fmt.Sprintf("common-%d", i), Name: name}
++				if iconDir := os.Getenv("MM_MODE_ICONS"); iconDir != "" {
++					data, err := os.ReadFile(filepath.Join(iconDir, icons[i]))
++					if err != nil {
++						t.Fatal(err)
++					}
++					bmp, _, size, err := artOf(data, 96)
++					if err != nil {
++						t.Fatal(err)
++					}
++					st.IconURL = fmt.Sprintf("icon:%d", i)
++					a.art.art[sized(st.IconURL, 96)] = &artwork{bmp: bmp, size: size}
++				}
++				common = append(common, st)
++			}
++			for i, name := range []string{"打游戏必备", "抖音爆火燃曲", "日语高燃", "通勤", "J-Pop 日本流行", "摸鱼模式", "甜美女声", "超萌嗓音"} {
++				explore = append(explore, music.Station{ID: fmt.Sprintf("explore-%d", i), Name: name, Description: []string{"让旋律陪你一起出发", "发现喜欢的声音，继续听下去", "前奏响起，主角登场", "通勤路上的心动旋律"}[i%4], ImageURL: fmt.Sprintf("cover:%d", i%3)})
++			}
++			a.route = route{page: pageBrowse, src: "fake", id: "listening"}
++			a.browses["listening"] = &browseData{at: time.Now(), page: &music.Browse{Title: "听歌模式", Sections: []music.Section{
++				{Title: "常用模式", Layout: "mode-buttons", Stations: common},
++				{Title: "探索更多新模式", Layout: "mode-covers", Stations: explore},
++			}}}
++			tt := ui.NewTester(a.view, width, 1050)
++			tt.SetDark(dark)
++			settled(tt)
++			saveFrame(t, dir, fmt.Sprintf("listening-modes-%d-dark-%v.png", width, dark), tt.Image())
++		}
++	}
++}
++
++// Real mode glyphs must retain their clear background through artOf and its
++// bitmap reload, unlike the oversized scene images converted to opaque JPEG.
++func TestListeningModeGlyphPipeline(t *testing.T) {
++	dir := os.Getenv("MM_MODE_ICONS")
++	if dir == "" {
++		t.Skip("set MM_MODE_ICONS to verify packaged glyphs through the host artwork pipeline")
++	}
++	files, err := os.ReadDir(dir)
++	if err != nil {
++		t.Fatal(err)
++	}
++	checked := 0
++	for _, file := range files {
++		if file.IsDir() || !strings.HasSuffix(file.Name(), ".png") {
++			continue
++		}
++		data, err := os.ReadFile(filepath.Join(dir, file.Name()))
++		if err != nil {
++			t.Fatal(err)
++		}
++		bmp, decoded, _, err := artOf(data, 96)
++		if err != nil {
++			t.Fatal(err)
++		}
++		w, h := bmp.Size()
++		background := ui.RGB(244, 245, 246)
++		for _, reload := range []bool{false, true} {
++			if reload {
++				bmp.ReleasePixels()
++			}
++			tt := ui.NewTester(func(c *ui.Context) {
++				c.Root().Background(background)
++				ui.Box(c).Fill().Draw(func(p *ui.Painter, r ui.Rect) {
++					p.ImageRegion(bmp, ui.Rect{}, r, ui.ImageOptions{Tint: ui.RGB(25, 25, 25)})
++				})
++			}, w, h)
++			tt.Frame()
++			img := tt.Image()
++			corners := [][2]int{{0, 0}, {w - 1, 0}, {0, h - 1}, {w - 1, h - 1}}
++			clear := 0
++			for _, corner := range corners {
++				x, y := corner[0], corner[1]
++				if _, _, _, alpha := decoded.At(x, y).RGBA(); alpha != 0 {
++					continue
++				}
++				clear++
++				r, g, b, _ := img.At(x, y).RGBA()
++				if r>>8 != uint32(background.R) || g>>8 != uint32(background.G) || b>>8 != uint32(background.B) {
++					t.Fatalf("%s reload=%v acquired an opaque background at %d,%d: %d,%d,%d", file.Name(), reload, x, y, r>>8, g>>8, b>>8)
++				}
++			}
++			if clear == 0 {
++				t.Fatalf("%s has no transparent corner", file.Name())
++			}
++		}
++		checked++
++	}
++	if checked == 0 {
++		t.Fatal("no packaged mode PNGs found")
++	}
++	t.Logf("Verified %d PNG glyphs through artOf(96), tint and bitmap reload", checked)
++}
+--- a/internal/app/settings.go
++++ b/internal/app/settings.go
+@@ -32,6 +32,11 @@
+ 	// Notch shows the quick player around the notch: the listener turns
+ 	// it on.
+ 	Notch bool `json:"notch"`
++	// TaskbarPlayer keeps a compact player in free space on Windows' taskbar.
++	TaskbarPlayer bool `json:"taskbarPlayer"`
++	// TaskbarSide is the left/right safe taskbar slot selected by dragging.
++	// Empty values from older settings retain the left placement.
++	TaskbarSide string `json:"taskbarSide,omitempty"`
+ 	// NotchActivity shows the cover and the music's levels beside the
+ 	// notch while music plays, which hides the menu bar there.
+ 	NotchActivity bool `json:"notchActivity"`
+@@ -88,7 +93,7 @@
+ }
+ 
+ func defaultSettings() settings {
+-	return settings{Language: i18n.System, NotchActivity: true, Quality: "high", Appearance: "system", Volume: 0.8, Normalize: true, AppIcon: "dock-and-menubar", CacheMB: 2048}
++	return settings{Language: i18n.System, NotchActivity: true, TaskbarPlayer: true, Quality: "high", Appearance: "system", Volume: 0.8, Normalize: true, AppIcon: "dock-and-menubar", CacheMB: 2048}
+ }
+ 
+ func settingsPath() (string, error) {
+--- /dev/null
++++ b/internal/app/taskbar.go
+@@ -0,0 +1,91 @@
++package app
++
++// The taskbar player is a separate, non-activating window in unused taskbar
++// space. Its controls drive the same player and queue as the main view.
++type taskbarControls interface {
++	sync()
++	close()
++}
++
++// Dragging only changes the taskbar panel's preferred safe slot, never the
++// player queue. Platforms without this panel can leave the interface absent.
++type taskbarDragControls interface {
++	beginDrag()
++	updateDrag()
++	endDrag()
++	cancelDrag()
++}
++
++func (a *app) beginTaskbarDrag() {
++	if panel, ok := a.taskbar.(taskbarDragControls); ok {
++		panel.beginDrag()
++	}
++}
++
++// Preserve the accumulated DIP move if the first delivered event is already
++// outside this small window, so dragging anchors at the original press.
++func (a *app) beginTaskbarDragFrom(deltaX float32) {
++	if panel, ok := a.taskbar.(interface{ beginDragFrom(float32) }); ok {
++		panel.beginDragFrom(deltaX)
++		return
++	}
++	a.beginTaskbarDrag()
++}
++
++func (a *app) updateTaskbarDrag() {
++	if panel, ok := a.taskbar.(taskbarDragControls); ok {
++		panel.updateDrag()
++	}
++}
++
++func (a *app) endTaskbarDrag() {
++	if panel, ok := a.taskbar.(taskbarDragControls); ok {
++		panel.endDrag()
++	}
++}
++
++func (a *app) cancelTaskbarDrag() {
++	if panel, ok := a.taskbar.(taskbarDragControls); ok {
++		panel.cancelDrag()
++	}
++}
++
++// The small close control hides this panel until it is enabled in Settings;
++// unlike closeTaskbar at shutdown, it does not destroy the player or window.
++func (a *app) dismissTaskbarWidget() {
++	a.settings.TaskbarPlayer = false
++	a.settings.save()
++	a.syncTaskbar()
++	a.redraw()
++}
++
++func (a *app) setTaskbarSide(side string) {
++	side = normalizedTaskbarSide(side)
++	if a.settings.TaskbarSide == side {
++		return
++	}
++	a.settings.TaskbarSide = side
++	a.settings.save()
++	a.syncTaskbar()
++	a.redraw()
++}
++
++func normalizedTaskbarSide(side string) string {
++	if side == "right" {
++		return "right"
++	}
++	return "left"
++}
++
++func (a *app) syncTaskbar() {
++	if a.taskbar != nil {
++		a.taskbar.sync()
++	}
++}
++
++func (a *app) closeTaskbar() {
++	if a.taskbar != nil {
++		a.taskbar.close()
++		a.taskbar = nil
++	}
++}
+--- /dev/null
++++ b/internal/app/taskbar_geometry.go
+@@ -0,0 +1,137 @@
++package app
++
++import (
++	"math"
++	"sort"
++)
++
++// All geometry is in physical desktop pixels. Do not scale global X/Y by a
++// monitor's DPI: monitors with different scales do not share one DIP origin.
++type taskbarRect struct{ Left, Top, Right, Bottom int32 }
++
++func (r taskbarRect) width() int32  { return r.Right - r.Left }
++func (r taskbarRect) height() int32 { return r.Bottom - r.Top }
++func (r taskbarRect) valid() bool   { return r.width() > 0 && r.height() > 0 }
++func (r taskbarRect) overlaps(s taskbarRect) bool {
++	return r.Left < s.Right && s.Left < r.Right && r.Top < s.Bottom && s.Top < r.Bottom
++}
++
++// taskbarPlacement subtracts occupied controls and other widgets before
++// choosing a size. Unknown geometry never authorizes covering taskbar buttons.
++func taskbarPlacement(bar taskbarRect, occupied []taskbarRect, dpi uint32) (taskbarRect, bool) {
++	return taskbarPlacementForSide(bar, occupied, dpi, "left")
++}
++
++// taskbarPlacementForSide prefers the requested half even when that needs a
++// smaller panel. Only if no size fits there does it use the opposite half.
++func taskbarPlacementForSide(bar taskbarRect, occupied []taskbarRect, dpi uint32, side string) (taskbarRect, bool) {
++	if !bar.valid() || bar.height() > bar.width() || dpi < 48 || dpi > 768 {
++		return taskbarRect{}, false
++	}
++	px := func(dip int) int32 { return int32(math.Ceil(float64(dip) * float64(dpi) / 96)) }
++	if bar.height() < px(28) { // auto-hidden taskbars may expose only a thin edge
++		return taskbarRect{}, false
++	}
++	margin := px(6)
++	type span struct{ left, right int32 }
++	spans := []span{{bar.Left, bar.Left + px(12)}, {bar.Right - px(12), bar.Right}}
++	for _, r := range occupied {
++		if r.valid() && r.overlaps(bar) {
++			spans = append(spans, span{max(bar.Left, r.Left-margin), min(bar.Right, r.Right+margin)})
++		}
++	}
++	sort.Slice(spans, func(i, j int) bool { return spans[i].left < spans[j].left })
++	var gaps []span
++	left := bar.Left
++	for _, s := range spans {
++		if s.left > left {
++			gaps = append(gaps, span{left, s.left})
++		}
++		left = max(left, s.right)
++	}
++	if left < bar.Right {
++		gaps = append(gaps, span{left, bar.Right})
++	}
++	right := normalizedTaskbarSide(side) == "right"
++	midpoint := bar.Left + bar.width()/2
++	// A side is about available taskbar space, not a fixed desktop X. This
++	// also handles monitors left of the primary monitor and mixed DPI.
++	for _, preferredHalf := range []bool{true, false} {
++		for _, width := range []int{388, 248, 200, 108} {
++			for i := range gaps {
++				at := i
++				if right {
++					at = len(gaps) - 1 - i
++				}
++				gap := gaps[at]
++				if gap.right-gap.left < px(width) {
++					continue
++				}
++				x := gap.left
++				if right {
++					x = gap.right - px(width)
++				}
++				onPreferredHalf := (x+px(width)/2 >= midpoint) == right
++				if onPreferredHalf != preferredHalf {
++					continue
++				}
++				h := min(px(40), bar.height())
++				top := bar.Top + (bar.height()-h)/2
++				return taskbarRect{x, top, x + px(width), top + h}, true
++			}
++		}
++	}
++	return taskbarRect{}, false
++}
++
++type taskbarPlacements struct {
++	bar         taskbarRect
++	left, right taskbarRect
++	leftOK      bool
++	rightOK     bool
++}
++
++func (p taskbarPlacements) forSide(side string) (taskbarRect, bool) {
++	if normalizedTaskbarSide(side) == "right" {
++		return p.right, p.rightOK
++	}
++	return p.left, p.leftOK
++}
++
++// The frame previews the actual safe landing slot, not the moving strip's
++// current rectangle. Without an active drag or a measured slot it vanishes.
++func taskbarSnapPreviewPlacement(p taskbarPlacements, side string, dragging bool) (taskbarRect, bool) {
++	if !dragging || !p.bar.valid() {
++		return taskbarRect{}, false
++	}
++	r, ok := p.forSide(side)
++	if !ok || !r.valid() || r.Left < p.bar.Left || r.Right > p.bar.Right || r.Top < p.bar.Top || r.Bottom > p.bar.Bottom {
++		return taskbarRect{}, false
++	}
++	return r, true
++}
++
++// taskbarSideAtCursor maps a real drag's screen coordinate to a docking side.
++// Staying outside the taskbar vertically does not prevent reaching its side.
++func taskbarSideAtCursor(bar taskbarRect, x int32) string {
++	if bar.valid() && x >= bar.Left+bar.width()/2 {
++		return "right"
++	}
++	return "left"
++}
++
++// Keep the held panel's size and horizontal grab point under the cursor.
++// Release snaps to a safe slot; this preview cannot escape the taskbar.
++func taskbarDragPlacement(bar, start taskbarRect, grabX, cursorX int32) (taskbarRect, bool) {
++	if !bar.valid() || !start.valid() || start.width() > bar.width() || start.height() > bar.height() {
++		return taskbarRect{}, false
++	}
++	x := max(bar.Left, min(cursorX-grabX, bar.Right-start.width()))
++	y := max(bar.Top, min(start.Top, bar.Bottom-start.height()))
++	return taskbarRect{x, y, x + start.width(), y + start.height()}, true
++}
++
++func taskbarDragGrabOffset(start taskbarRect, cursorX int32, movedDIP float32, dpi uint32) int32 {
++	grab := cursorX - start.Left - int32(math.Round(float64(movedDIP)*float64(dpi)/96))
++	return max(0, min(grab, start.width()))
++}
+--- /dev/null
++++ b/internal/app/taskbar_lyric.go
+@@ -0,0 +1,74 @@
++package app
++
++import (
++	"strings"
++	"time"
++
++	"mygo-music/internal/lyrics"
++)
++
++type taskbarWidgetGesture struct {
++	x, y   float32
++	active bool
++}
++
++// taskbarLyricFrame uses playback time rather than a running UI animation,
++// so a pause or seek immediately paints the correct part of the same word.
++type taskbarLyricFrame struct {
++	text     string
++	words    []lyrics.Word
++	progress []float32
++	next     time.Duration
++}
++
++func taskbarLyricAt(lines []lyrics.Line, pos time.Duration, playing bool) taskbarLyricFrame {
++	frame := taskbarLyricFrame{}
++	cur := lyrics.Index(lines, pos)
++	wake := func(at time.Duration) {
++		if playing && at > pos && (frame.next == 0 || at-pos < frame.next) {
++			frame.next = at - pos
++		}
++	}
++	if cur+1 < len(lines) {
++		wake(lines[cur+1].At)
++	}
++	if cur < 0 {
++		return frame
++	}
++	line := lines[cur]
++	frame.text = line.Text
++	if !line.WordTimed || len(line.Words) == 0 {
++		return frame
++	}
++	// Reject incomplete/malformed word timing instead of highlighting the
++	// wrong text or passing an invalid interval to the sweep calculation.
++	var text strings.Builder
++	lastStart := line.At
++	for _, word := range line.Words {
++		if word.End <= word.Start || word.Start < lastStart {
++			return frame
++		}
++		lastStart = word.Start
++		text.WriteString(word.Text)
++	}
++	if strings.TrimSpace(text.String()) != strings.TrimSpace(line.Text) {
++		return frame
++	}
++	frame.words = line.Words
++	frame.progress = make([]float32, len(line.Words))
++	for i, word := range line.Words {
++		frame.progress[i] = clamp01(float32(pos-word.Start) / float32(word.End-word.Start))
++		if pos >= word.Start && pos < word.End {
++			wake(min(pos+40*time.Millisecond, word.End))
++		} else {
++			wake(word.Start)
++		}
++	}
++	return frame
++}
++
++// Keep the word being sung visible in a narrow taskbar slot. This depends
++// only on the lyric position, so paused lyrics never start a marquee timer.
++func taskbarLyricOffset(total, available, sung float32) float32 {
++	return min(max(0, total-available), max(0, sung-available*0.65))
++}
+--- /dev/null
++++ b/internal/app/taskbar_lyric_test.go
+@@ -0,0 +1,80 @@
++package app
++
++import (
++	"testing"
++	"time"
++
++	"mygo-music/internal/lyrics"
++)
++
++// Real word intervals drive the sweep, including a gap between words and
++// a seek backwards, without using UI elapsed time.
++func TestTaskbarLyricTimingAndSeek(t *testing.T) {
++	s := time.Second
++	lines := []lyrics.Line{
++		{At: s, End: 4 * s, Text: "你好", WordTimed: true, Words: []lyrics.Word{
++			{Text: "你", Start: s, End: 2 * s}, {Text: "好", Start: 3 * s, End: 4 * s},
++		}},
++		{At: 5 * s, End: 7 * s, Text: "下一句"},
++	}
++	for _, tc := range []struct {
++		pos           time.Duration
++		first, second float32
++		next          time.Duration
++	}{
++		{1500 * time.Millisecond, .5, 0, 40 * time.Millisecond},
++		{2500 * time.Millisecond, 1, 0, 500 * time.Millisecond},
++		{3500 * time.Millisecond, 1, .5, 40 * time.Millisecond},
++		{4 * s, 1, 1, s},
++		{1250 * time.Millisecond, .25, 0, 40 * time.Millisecond},
++	} {
++		frame := taskbarLyricAt(lines, tc.pos, true)
++		if len(frame.progress) != 2 || frame.progress[0] != tc.first || frame.progress[1] != tc.second || frame.next != tc.next {
++			t.Errorf("at %v: %+v", tc.pos, frame)
++		}
++	}
++	if before := taskbarLyricAt(lines, 0, true); before.text != "" || before.next != s {
++		t.Fatalf("intro: %+v", before)
++	}
++	if after := taskbarLyricAt(lines, 8*s, true); after.text != "下一句" || after.next != 0 {
++		t.Fatalf("outro: %+v", after)
++	}
++}
++
++// A paused word keeps its exact sung portion but requests no more frames;
++// estimated LRC words and malformed source words stay plain whole lines.
++func TestTaskbarLyricPauseAndPlainFallback(t *testing.T) {
++	line := lyrics.Line{At: 0, End: time.Second, Text: "Hello", WordTimed: true,
++		Words: []lyrics.Word{{Text: "Hello", Start: 0, End: time.Second}}}
++	frame := taskbarLyricAt([]lyrics.Line{line}, 500*time.Millisecond, false)
++	if len(frame.progress) != 1 || frame.progress[0] != .5 || frame.next != 0 {
++		t.Fatalf("paused: %+v", frame)
++	}
++	plain := lyrics.Build("[00:00.00]Hello\n[00:02.00]World", "")
++	frame = taskbarLyricAt(plain, 500*time.Millisecond, true)
++	if frame.text != "Hello" || len(frame.words) != 0 || frame.next != 1500*time.Millisecond {
++		t.Fatalf("line-only timing pretended to be word timing: %+v", frame)
++	}
++	for _, words := range [][]lyrics.Word{
++		{{Text: "Wrong", Start: 0, End: time.Second}},
++		{{Text: "Hello", Start: time.Second, End: 0}},
++	} {
++		line.Words = words
++		frame = taskbarLyricAt([]lyrics.Line{line}, 500*time.Millisecond, true)
++		if frame.text != "Hello" || len(frame.words) != 0 || frame.next != 0 {
++			t.Errorf("malformed timing: %+v", frame)
++		}
++	}
++}
++
++// Following a long line keeps the sung word in view, but never moves past
++// either edge and never scrolls text that already fits.
++func TestTaskbarLyricFollowing(t *testing.T) {
++	for _, tc := range []struct{ total, width, sung, want float32 }{
++		{300, 100, 0, 0}, {300, 100, 150, 85}, {300, 100, 300, 200}, {80, 100, 70, 0},
++	} {
++		if got := taskbarLyricOffset(tc.total, tc.width, tc.sung); got != tc.want {
++			t.Errorf("offset(%v): %v, want %v", tc, got, tc.want)
++		}
++	}
++}
+--- /dev/null
++++ b/internal/app/taskbar_other.go
+@@ -0,0 +1,5 @@
++//go:build !windows
++
++package app
++
++func (a *app) installTaskbar() {}
+--- /dev/null
++++ b/internal/app/taskbar_probe_windows.go
+@@ -0,0 +1,285 @@
++//go:build windows
++
++package app
++
++import (
++	"runtime"
++	"syscall"
++	"unsafe"
++
++	"golang.org/x/sys/windows"
++)
++
++// UIAutomationClient.h from the Windows SDK defines these COM methods. Only
++// cached control types, visibility and bounding rectangles are requested: no
++// labels, window text, account state, invocation patterns or input injection.
++type taskbarCOM struct{ vtable *[85]uintptr }
++
++//go:uintptrescapes
++func (o *taskbarCOM) call(method int, args ...uintptr) uintptr {
++	r, _, _ := syscall.SyscallN(o.vtable[method], append([]uintptr{uintptr(unsafe.Pointer(o))}, args...)...)
++	runtime.KeepAlive(o)
++	return r
++}
++func (o *taskbarCOM) release() {
++	if o != nil {
++		o.call(2)
++	}
++}
++func taskbarFailed(hr uintptr) bool { return int32(hr) < 0 }
++
++var (
++	taskbarOle32          = windows.NewLazySystemDLL("ole32.dll")
++	taskbarCoInitialize   = taskbarOle32.NewProc("CoInitializeEx")
++	taskbarCoUninitialize = taskbarOle32.NewProc("CoUninitialize")
++	taskbarCoCreate       = taskbarOle32.NewProc("CoCreateInstance")
++	taskbarEnumCallback   = syscall.NewCallback(taskbarCollectWindow)
++)
++
++type taskbarProbe struct {
++	automation, condition, cache *taskbarCOM
++	previousDPI                  uintptr
++}
++
++func newTaskbarProbe() *taskbarProbe {
++	hr, _, _ := taskbarCoInitialize.Call(0, 0) // COINIT_MULTITHREADED
++	if taskbarFailed(hr) {
++		return nil
++	}
++	p := &taskbarProbe{}
++	// The app is PMv2, but a diagnostic/test host may not be. Keep HWND,
++	// UIA and monitor coordinates in physical pixels on this worker too.
++	if taskbarSetThreadDPI.Find() == nil {
++		p.previousDPI, _, _ = taskbarSetThreadDPI.Call(^uintptr(3))
++	}
++	clsid, _ := windows.GUIDFromString("{E22AD333-B25F-460C-83D0-0581107395C9}") // CUIAutomation8
++	iid, _ := windows.GUIDFromString("{34723AFF-0C9D-49D0-9896-7AB52DF8CD8A}")   // IUIAutomation2
++	hr, _, _ = taskbarCoCreate.Call(uintptr(unsafe.Pointer(&clsid)), 0, 1, uintptr(unsafe.Pointer(&iid)), uintptr(unsafe.Pointer(&p.automation)))
++	if taskbarFailed(hr) || p.automation == nil {
++		p.close()
++		return nil
++	}
++	// Bound each provider transaction; Explorer being hung cannot block the
++	// app's event loop, and cannot leave a long-lived stale placement.
++	p.automation.call(61, 750) // put_ConnectionTimeout
++	p.automation.call(63, 750) // put_TransactionTimeout
++	if taskbarFailed(p.automation.call(21, uintptr(unsafe.Pointer(&p.condition)))) ||
++		taskbarFailed(p.automation.call(20, uintptr(unsafe.Pointer(&p.cache)))) {
++		p.close()
++		return nil
++	}
++	for _, property := range []uintptr{30001, 30003, 30022} { // rect, type, offscreen
++		if taskbarFailed(p.cache.call(3, property)) {
++			p.close()
++			return nil
++		}
++	}
++	return p
++}
++
++func (p *taskbarProbe) close() {
++	p.cache.release()
++	p.condition.release()
++	p.automation.release()
++	if p.previousDPI != 0 {
++		taskbarSetThreadDPI.Call(p.previousDPI)
++	}
++	taskbarCoUninitialize.Call()
++}
++
++func (p *taskbarProbe) occupied(hwnd uintptr) ([]taskbarRect, bool) {
++	var root, list *taskbarCOM
++	if taskbarFailed(p.automation.call(6, hwnd, uintptr(unsafe.Pointer(&root)))) || root == nil {
++		return nil, false
++	}
++	defer root.release()
++	// Fetch all relevant properties in one cross-process operation, instead
++	// of querying every button individually once a second.
++	if taskbarFailed(root.call(8, 4, uintptr(unsafe.Pointer(p.condition)), uintptr(unsafe.Pointer(p.cache)), uintptr(unsafe.Pointer(&list)))) || list == nil {
++		return nil, false
++	}
++	defer list.release()
++	var length int32
++	if taskbarFailed(list.call(3, uintptr(unsafe.Pointer(&length)))) || length < 1 || length > 2048 {
++		return nil, false
++	}
++	var rects []taskbarRect
++	buttons := 0
++	for i := int32(0); i < length; i++ {
++		var element *taskbarCOM
++		if taskbarFailed(list.call(4, uintptr(i), uintptr(unsafe.Pointer(&element)))) || element == nil {
++			return nil, false
++		}
++		var kind, offscreen int32
++		var rect taskbarRect
++		ok := !taskbarFailed(element.call(53, uintptr(unsafe.Pointer(&kind)))) &&
++			!taskbarFailed(element.call(70, uintptr(unsafe.Pointer(&offscreen)))) &&
++			!taskbarFailed(element.call(75, uintptr(unsafe.Pointer(&rect))))
++		element.release()
++		if !ok {
++			return nil, false
++		}
++		if offscreen != 0 || !rect.valid() {
++			continue
++		}
++		// Containers span unused space too. Their visible contents reserve
++		// space; the taskbar root, list, toolbar and XAML panes do not.
++		switch kind {
++		case 50000, 50002, 50003, 50004, 50005, 50006, 50007, 50011, 50012, 50013, 50014, 50015, 50016, 50019, 50020, 50031:
++			rects = append(rects, rect)
++			if kind == 50000 || kind == 50007 {
++				buttons++
++			}
++		}
++	}
++	// If Windows does not expose taskbar buttons, do not guess free space.
++	return rects, buttons > 0
++}
++
++type taskbarNativeWindow struct {
++	hwnd, rootOwner uintptr
++	exStyle         uintptr
++	class           string
++	rect            taskbarRect
++}
++
++func taskbarCollectWindow(hwnd, context uintptr) uintptr {
++	if !taskbarWindowShown(hwnd) {
++		return 1
++	}
++	rect, ok := taskbarWindowRect(hwnd)
++	if !ok {
++		return 1
++	}
++	exStyle, _, _ := taskbarGetLong.Call(hwnd, ^uintptr(19))
++	if exStyle&0x80000 != 0 { // a wholly transparent layered window is not occupied space
++		var key, flags uint32
++		var alpha byte
++		ok, _, _ := taskbarLayeredAttributes.Call(hwnd, uintptr(unsafe.Pointer(&key)), uintptr(unsafe.Pointer(&alpha)), uintptr(unsafe.Pointer(&flags)))
++		if ok != 0 && flags&2 != 0 && alpha == 0 {
++			return 1
++		}
++	}
++	owner, _, _ := taskbarAncestor.Call(hwnd, 3) // GA_ROOTOWNER
++	list := (*[]taskbarNativeWindow)(unsafe.Pointer(context))
++	*list = append(*list, taskbarNativeWindow{hwnd: hwnd, rootOwner: owner, exStyle: exStyle, class: taskbarWindowClass(hwnd), rect: rect})
++	return 1
++}
++
++func taskbarSnapshotWindows() []taskbarNativeWindow {
++	var list []taskbarNativeWindow
++	taskbarEnumWindows.Call(taskbarEnumCallback, uintptr(unsafe.Pointer(&list)))
++	runtime.KeepAlive(list)
++	return list
++}
++
++func taskbarVisibleRect(hwnd uintptr, rect taskbarRect) (taskbarRect, bool) {
++	monitor, _, _ := taskbarMonitorFromWindow.Call(hwnd, 0)
++	if monitor == 0 {
++		return taskbarRect{}, false
++	}
++	var info struct {
++		Size          uint32
++		Monitor, Work taskbarRect
++		Flags         uint32
++	}
++	info.Size = uint32(unsafe.Sizeof(info))
++	ok, _, _ := taskbarGetMonitorInfo.Call(monitor, uintptr(unsafe.Pointer(&info)))
++	if ok == 0 {
++		return taskbarRect{}, false
++	}
++	// Clipping detects auto-hide even though Explorer retains a full-height
++	// HWND just outside the monitor. Never pin our panel over an auto-hide edge.
++	r := taskbarRect{max(rect.Left, info.Monitor.Left), max(rect.Top, info.Monitor.Top), min(rect.Right, info.Monitor.Right), min(rect.Bottom, info.Monitor.Bottom)}
++	return r, r.valid()
++}
++
++func (p *taskbarProbe) place(own uintptr) (taskbarRect, bool) {
++	return p.placements(own).forSide("left")
++}
++
++func (p *taskbarProbe) placements(own uintptr, ignored ...uintptr) taskbarPlacements {
++	windows := taskbarSnapshotWindows()
++	foreground, _, _ := taskbarForeground.Call()
++	foregroundRoot, _, _ := taskbarAncestor.Call(foreground, 3)
++	// Prefer the primary taskbar. A secondary display is a safe fallback
++	// when the primary has no space; each uses its own physical pixel DPI.
++	for _, class := range []string{"Shell_TrayWnd", "Shell_SecondaryTrayWnd"} {
++		for barIndex, bar := range windows {
++			if bar.class != class {
++				continue
++			}
++			rect, ok := taskbarVisibleRect(bar.hwnd, bar.rect)
++			if !ok {
++				continue
++			}
++			dpi, _, _ := taskbarGetDPI.Call(bar.hwnd)
++			if dpi == 0 {
++				continue
++			}
++			occupied, ok := p.occupied(bar.hwnd)
++			if !ok {
++				continue
++			}
++			for otherIndex, other := range windows {
++				if taskbarProbeIgnoresWindow(other.hwnd, own, bar.hwnd, ignored) {
++					continue
++				}
++				switch other.class {
++				case "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd":
++					continue
++				}
++				active := other.hwnd == foreground || foregroundRoot != 0 && other.rootOwner == foregroundRoot
++				if taskbarWindowOccludes(rect, other.rect, other.exStyle, otherIndex < barIndex, active) {
++					occupied = append(occupied, other.rect)
++				}
++			}
++			left, leftOK := taskbarPlacementForSide(rect, occupied, uint32(dpi), "left")
++			right, rightOK := taskbarPlacementForSide(rect, occupied, uint32(dpi), "right")
++			if leftOK || rightOK {
++				return taskbarPlacements{bar: rect, left: left, right: right, leftOK: leftOK, rightOK: rightOK}
++			}
++		}
++	}
++	return taskbarPlacements{}
++}
++
++// Only explicitly owned panels are ignored; other players and overlays keep
++// reserving space. The snap preview's immutable handle is supplied by watch.
++func taskbarProbeIgnoresWindow(hwnd, own, bar uintptr, ignored []uintptr) bool {
++	if hwnd == own || hwnd == bar {
++		return true
++	}
++	for _, ignore := range ignored {
++		if ignore != 0 && hwnd == ignore {
++			return true
++		}
++	}
++	return false
++}
++
++// Large non-activating overlays (GPU telemetry, input surfaces, etc.) may have
++// monitor-sized HWNDs despite drawing no content at the taskbar. Do not treat
++// their rectangle alone as a full-screen app. A foreground window is different;
++// compact widgets and ordinary popups count when above the taskbar in Z order.
++func taskbarWindowOccludes(bar, other taskbarRect, exStyle uintptr, above, active bool) bool {
++	if !other.overlaps(bar) {
++		return false
++	}
++	overlap := min(other.Bottom, bar.Bottom) - max(other.Top, bar.Top)
++	if overlap <= bar.height()/4 {
++		return false
++	}
++	if active {
++		return true
++	}
++	if !above {
++		return false
++	}
++	if other.height() <= bar.height()*3 {
++		return true
++	}
++	// TRANSPARENT affects drawing/hit-testing, not whether content exists:
++	// a compact click-through lyrics widget still reserves its visible area.
++	return exStyle&(0x08000000|0x20) == 0 // NOACTIVATE / TRANSPARENT large overlays
++}
+--- /dev/null
++++ b/internal/app/taskbar_snap_preview_windows.go
+@@ -0,0 +1,24 @@
++package app
++
++import "github.com/egoist/mygo/ui"
++
++// The native drag controller positions this click-through outline at the
++// exact safe slot that will receive the player when the pointer lets go.
++func (a *app) taskbarSnapPreviewView(c *ui.Context) {
++	theme := *c.Theme()
++	if a.tray != nil {
++		if a.tray.Dark() {
++			theme = *ui.DarkTheme()
++		} else {
++			theme = *ui.LightTheme()
++		}
++	}
++	p := paletteFor(&theme)
++	theme.Background = ui.Transparent
++	c.SetTheme(&theme)
++	c.Root().Background(ui.Transparent)
++	// Leave a small outer inset so the rounded stroke is never clipped at
++	// the native window edge. No controls, text or timers obstruct dragging.
++	ui.Box(c.Key("snap-outline")).Fill().Margin(1).Radius(8).PassThrough().
++		Background(p.accent.Alpha(0.13)).Border(2, p.accent.Alpha(0.95))
++}
+--- /dev/null
++++ b/internal/app/taskbar_snap_preview_windows_test.go
+@@ -0,0 +1,22 @@
++package app
++
++import (
++	"fmt"
++	"testing"
++
++	"github.com/egoist/mygo/ui"
++)
++
++// MM_FRAMES shows the snap target at the full and smallest taskbar slots.
++func TestTaskbarSnapPreviewFrames(t *testing.T) {
++	dir := framesDir(t)
++	for _, dark := range []bool{false, true} {
++		for _, width := range []int{388, 108} {
++			a := newTestApp()
++			tt := ui.NewTester(a.taskbarSnapPreviewView, width, 40)
++			tt.SetDark(dark)
++			settled(tt)
++			saveFrame(t, dir, fmt.Sprintf("taskbar-snap-%d-dark-%v.png", width, dark), tt.Image())
++		}
++	}
++}
+--- /dev/null
++++ b/internal/app/taskbar_test.go
+@@ -0,0 +1,260 @@
++package app
++
++import (
++	"encoding/json"
++	"math/rand"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"mygo-music/internal/music"
++)
++
++func TestTaskbarPlacementKeepsButtonsAndOtherPlayerClear(t *testing.T) {
++	bar := taskbarRect{0, 1032, 1920, 1080}
++	buttons := []taskbarRect{{800, 1032, 1400, 1080}, {1640, 1032, 1920, 1080}}
++	first, ok := taskbarPlacement(bar, buttons, 96)
++	if !ok || first != (taskbarRect{12, 1036, 400, 1076}) {
++		t.Fatalf("left full strip: %v %v", first, ok)
++	}
++	// Another music player already uses the leftmost slot. Keep its controls
++	// intact; find a different slot instead of laying our panel over it.
++	busy := append(append([]taskbarRect(nil), buttons...), first)
++	second, ok := taskbarPlacement(bar, busy, 96)
++	if !ok || second.overlaps(first) || second.Left != 406 {
++		t.Fatalf("existing player was covered: %v %v", second, ok)
++	}
++	for _, b := range buttons {
++		if second.overlaps(b) {
++			t.Fatalf("taskbar control was covered: %v", b)
++		}
++	}
++	// With the other player closed, the next measurement can use the left.
++	again, _ := taskbarPlacement(bar, buttons, 96)
++	if again != first {
++		t.Fatalf("free left slot not restored: %v", again)
++	}
++}
++
++func TestTaskbarPlacementShrinksBeforeHiding(t *testing.T) {
++	for _, tc := range []struct{ total, want int32 }{{500, 388}, {300, 248}, {160, 108}, {130, 0}} {
++		r, ok := taskbarPlacement(taskbarRect{0, 0, tc.total, 40}, nil, 96)
++		if ok != (tc.want != 0) || ok && r.width() != tc.want {
++			t.Fatalf("width %d: got %v %v", tc.total, r, ok)
++		}
++	}
++}
++
++func TestTaskbarPlacementMixedDPINegativeMonitor(t *testing.T) {
++	bar := taskbarRect{-1920, 1000, 0, 1060}
++	r, ok := taskbarPlacement(bar, []taskbarRect{{-900, 1000, 0, 1060}}, 144)
++	// Physical monitor origin is retained; only dimensions/margins scale.
++	want := taskbarRect{-1902, 1000, -1320, 1060}
++	if !ok || r != want {
++		t.Fatalf("150%% negative monitor: got %v %v want %v", r, ok, want)
++	}
++}
++
++func TestTaskbarPlacementHidesUnsupportedOrOccupiedBars(t *testing.T) {
++	for _, r := range []taskbarRect{{0, 1078, 1920, 1080}, {0, 0, 48, 1080}, {0, 0, 0, 0}} {
++		if result, ok := taskbarPlacement(r, nil, 96); ok {
++			t.Fatalf("auto-hidden/vertical/invalid bar was used: %v", result)
++		}
++	}
++	bar := taskbarRect{0, 1032, 1920, 1080}
++	if _, ok := taskbarPlacement(bar, []taskbarRect{{0, 0, 1920, 1080}}, 96); ok {
++		t.Fatal("full-screen window was covered")
++	}
++	if _, ok := taskbarPlacement(bar, nil, 0); ok {
++		t.Fatal("unknown DPI was guessed")
++	}
++}
++
++func TestTaskbarPlacementNeverOverlapsOccupiedGeometry(t *testing.T) {
++	rng := rand.New(rand.NewSource(41))
++	for n := 0; n < 300; n++ {
++		dpi := []uint32{96, 120, 144, 192}[rng.Intn(4)]
++		bar := taskbarRect{-2000, 1200, -80, 1200 + int32(dpi/2)}
++		var occupied []taskbarRect
++		for j := 0; j < rng.Intn(12); j++ {
++			x := int32(rng.Intn(2400) - 2200)
++			occupied = append(occupied, taskbarRect{x, bar.Top, x + int32(rng.Intn(500)+1), bar.Bottom})
++		}
++		for _, side := range []string{"left", "right"} {
++			r, ok := taskbarPlacementForSide(bar, occupied, dpi, side)
++			if !ok {
++				continue
++			}
++			if r.Left < bar.Left || r.Right > bar.Right || r.Top < bar.Top || r.Bottom > bar.Bottom {
++				t.Fatalf("%s placement escaped its monitor: %v in %v", side, r, bar)
++			}
++			for _, b := range occupied {
++				if r.overlaps(b) {
++					t.Fatalf("%s occupied geometry covered: widget %v, occupied %v", side, r, b)
++				}
++			}
++		}
++	}
++}
++
++// Dropping on the right uses its narrower safe slot before a larger left slot.
++func TestTaskbarPlacementKeepsRequestedSideBeforeWidth(t *testing.T) {
++	bar := taskbarRect{0, 1032, 1920, 1080}
++	occupied := []taskbarRect{{800, 1032, 1400, 1080}, {1640, 1032, 1920, 1080}}
++	right, ok := taskbarPlacementForSide(bar, occupied, 96, "right")
++	if !ok || right != (taskbarRect{1434, 1036, 1634, 1076}) {
++		t.Fatalf("right lyric strip should use the safe gap beside the tray: %v %v", right, ok)
++	}
++	left, ok := taskbarPlacementForSide(bar, occupied, 96, "left")
++	if !ok || left != (taskbarRect{12, 1036, 400, 1076}) {
++		t.Fatalf("left strip should return to the safe left edge: %v %v", left, ok)
++	}
++	occupied = append(occupied, taskbarRect{960, 1032, 1920, 1080})
++	fallback, ok := taskbarPlacementForSide(bar, occupied, 96, "right")
++	if !ok || fallback.Right >= 800 {
++		t.Fatalf("a blocked side must use a safe fallback without covering controls: %v %v", fallback, ok)
++	}
++}
++
++// A drag chooses the monitor-relative half, including negative physical origins.
++func TestTaskbarDragUsesMonitorCoordinates(t *testing.T) {
++	bar := taskbarRect{-1920, 1000, 0, 1060}
++	if taskbarSideAtCursor(bar, -1800) != "left" || taskbarSideAtCursor(bar, -500) != "right" {
++		t.Fatal("drag destination was not relative to the taskbar's monitor")
++	}
++	right, ok := taskbarPlacementForSide(bar, []taskbarRect{{-1100, 1000, -600, 1060}}, 144, "right")
++	if !ok || right != (taskbarRect{-390, 1000, -18, 1060}) {
++		t.Fatalf("150%% right placement: %v %v", right, ok)
++	}
++}
++
++// A real mouse move must move the strip before reaching the screen midpoint.
++func TestTaskbarDragFollowsPointerAndOnlySnapsOnRelease(t *testing.T) {
++	bar := taskbarRect{0, 1528, 2560, 1600}
++	start := taskbarRect{18, 1534, 600, 1594}
++	grab := int32(120)
++	for _, tc := range []struct{ cursor, wantLeft int32 }{
++		{138, 18}, {198, 78}, {938, 818}, {1738, 1618}, {4000, 1978}, {-1000, 0},
++	} {
++		r, ok := taskbarDragPlacement(bar, start, grab, tc.cursor)
++		if !ok || r.Left != tc.wantLeft || r.width() != start.width() || r.Top != start.Top || r.height() != start.height() {
++			t.Fatalf("cursor %d: got %v %v; wanted fixed-size strip at %d", tc.cursor, r, ok, tc.wantLeft)
++		}
++	}
++	// Released on the right, a narrower safe gap takes over without covering
++	// its application buttons or the system tray.
++	occupied := []taskbarRect{{900, 1528, 1700, 1600}, {2070, 1528, 2560, 1600}}
++	docked, ok := taskbarPlacementForSide(bar, occupied, 144, taskbarSideAtCursor(bar, 1800))
++	if !ok || docked.Left < 1700 || docked.Right >= 2070 || docked.width() != 300 {
++		t.Fatalf("release did not use the smaller right-side safe slot: %v %v", docked, ok)
++	}
++}
++
++// Fast moves crossing the whole panel in one frame retain the press anchor at 150% DPI.
++func TestTaskbarDragRecoversFastFirstMoveAndNegativeOrigin(t *testing.T) {
++	bar := taskbarRect{-2560, 1528, 0, 1600}
++	start := taskbarRect{-2542, 1534, -1960, 1594}
++	// Mouse went down 120 px into the panel, then moved 1000 physical px
++	// before the first UI build (666.67 DIP at 150%).
++	current := int32(-1422)
++	grab := taskbarDragGrabOffset(start, current, 1000*96.0/144, 144)
++	if grab != 120 {
++		t.Fatalf("first move lost the original grab point: %d", grab)
++	}
++	moved, ok := taskbarDragPlacement(bar, start, grab, current)
++	if !ok || moved.Left != -1542 || moved.width() != 582 {
++		t.Fatalf("fast mouse move did not follow the cursor: %v %v", moved, ok)
++	}
++	if _, ok := taskbarDragPlacement(taskbarRect{}, start, grab, current); ok {
++		t.Fatal("a vanished taskbar must cancel the preview")
++	}
++}
++
++// The snap frame follows the safe destination, including its smaller right-side size, and disappears without a drag.
++func TestTaskbarSnapPreviewTracksLandingSlotAndLifecycle(t *testing.T) {
++	p := taskbarPlacements{
++		bar:  taskbarRect{0, 1528, 2560, 1600},
++		left: taskbarRect{18, 1534, 600, 1594}, leftOK: true,
++		right: taskbarRect{1761, 1534, 2061, 1594}, rightOK: true,
++	}
++	for _, side := range []string{"left", "right"} {
++		r, ok := taskbarSnapPreviewPlacement(p, side, true)
++		want, _ := p.forSide(side)
++		if !ok || r != want {
++			t.Fatalf("%s preview did not match actual landing bounds: %v %v", side, r, ok)
++		}
++		if _, ok := taskbarSnapPreviewPlacement(p, side, false); ok {
++			t.Fatalf("%s preview survived release, cancellation or disabling", side)
++		}
++	}
++	// App icons changed while dragging: the live frame must shrink with the slot.
++	p.right.Left = p.right.Right - 162
++	if r, ok := taskbarSnapPreviewPlacement(p, "right", true); !ok || r.width() != 162 {
++		t.Fatalf("preview retained a stale size after taskbar occupancy changed: %v %v", r, ok)
++	}
++	p.rightOK = false
++	if _, ok := taskbarSnapPreviewPlacement(p, "right", true); ok {
++		t.Fatal("an unavailable destination must not keep a snap frame")
++	}
++	p.rightOK, p.right.Right = true, 2600
++	if _, ok := taskbarSnapPreviewPlacement(p, "right", true); ok {
++		t.Fatal("preview escaped the measured taskbar bounds")
++	}
++	if _, ok := taskbarSnapPreviewPlacement(taskbarPlacements{}, "left", true); ok {
++		t.Fatal("preview survived disappearance of the taskbar")
++	}
++}
++
++type testTaskbarController struct {
++	syncs, closes, begins, updates, ends, cancels int
++}
++
++func (w *testTaskbarController) sync()       { w.syncs++ }
++func (w *testTaskbarController) close()      { w.closes++ }
++func (w *testTaskbarController) beginDrag()  { w.begins++ }
++func (w *testTaskbarController) updateDrag() { w.updates++ }
++func (w *testTaskbarController) endDrag()    { w.ends++ }
++func (w *testTaskbarController) cancelDrag() { w.cancels++ }
++
++// Docking and dismissing persist the listener's choice without clearing playback.
++func TestTaskbarDockAndDismissPersistWithoutStoppingPlayer(t *testing.T) {
++	a := newTestApp()
++	a.settings.path = filepath.Join(t.TempDir(), "settings.json")
++	a.settings.TaskbarPlayer = true
++	a.pl.Cue([]music.Track{song("1", "First"), song("2", "Second")})
++	a.pl.TogglePlay()
++	if !a.pl.Playing() {
++		t.Fatal("test player did not enter playback")
++	}
++	panel := &testTaskbarController{}
++	a.taskbar = panel
++	a.beginTaskbarDrag()
++	a.updateTaskbarDrag()
++	a.endTaskbarDrag()
++	a.cancelTaskbarDrag()
++	if panel.begins != 1 || panel.updates != 1 || panel.ends != 1 || panel.cancels != 1 {
++		t.Fatalf("drag gestures did not reach the native panel: %+v", panel)
++	}
++	a.setTaskbarSide("right")
++	a.dismissTaskbarWidget()
++	bytes, err := os.ReadFile(a.settings.path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	var saved settings
++	if err := json.Unmarshal(bytes, &saved); err != nil {
++		t.Fatal(err)
++	}
++	if saved.TaskbarSide != "right" || saved.TaskbarPlayer || panel.closes != 0 || panel.syncs == 0 {
++		t.Fatalf("dismiss did not retain a reopenable right-docked panel: settings=%+v panel=%+v", saved, panel)
++	}
++	if !a.pl.Playing() || a.pl.Current() == nil || a.pl.Current().ID != "1" || len(a.pl.Queue()) != 2 {
++		t.Fatal("dismissing the taskbar stopped playback or altered the queue")
++	}
++	a.settings.TaskbarPlayer = true
++	a.syncTaskbar()
++	a.setTaskbarSide("left")
++	if a.settings.TaskbarSide != "left" || !a.settings.TaskbarPlayer || panel.closes != 0 {
++		t.Fatal("the taskbar could not be reopened and moved back to the left")
++	}
++}
+--- /dev/null
++++ b/internal/app/taskbar_widget_view_windows.go
+@@ -0,0 +1,230 @@
++package app
++
++import (
++	"strings"
++
++	"github.com/egoist/mygo"
++	"github.com/egoist/mygo/ui"
++
++	"mygo-music/internal/music"
++)
++
++// taskbarWidgetView is the player in the taskbar's spare space. When that
++// space narrows, the cover, pause and next stay within reach.
++func (a *app) taskbarWidgetView(c *ui.Context) {
++	theme := *c.Theme()
++	// The transparent strip sits over the taskbar, whose appearance may
++	// differ from the app's (SystemUsesLightTheme vs AppsUseLightTheme).
++	if a.tray != nil {
++		if a.tray.Dark() {
++			theme = *ui.DarkTheme()
++		} else {
++			theme = *ui.LightTheme()
++		}
++	}
++	theme.Background = ui.Transparent
++	previousPalette := a.pal
++	a.pal = paletteFor(&theme)
++	defer func() { a.pal = previousPalette }()
++	p := a.pal
++	useAccent(&theme, p)
++	c.SetTheme(&theme)
++	c.Root().Background(ui.Transparent)
++
++	w, h := c.Size()
++	compact := w < 190
++	short := w < 240
++	artSize, iconSize, playSize := float32(32), float32(14), float32(18)
++	if w < 340 {
++		artSize, iconSize, playSize = 26, 12, 16
++	}
++	if compact {
++		artSize, iconSize, playSize = 20, 10, 14
++	}
++	artSize = min(artSize, max(20, h-8))
++	controlSize := min(iconSize+14, h-6)
++	playWidth := min(playSize+22, max(24, w/8))
++	playHeight := min(playSize+12, h-6)
++	titleSize, lyricSize := float32(10), float32(15)
++	if h < 34 {
++		titleSize, lyricSize = 8.5, 12
++	}
++	pl := a.pl
++	tr := pl.Current()
++	available := tr != nil && len(pl.Queue()) > 0
++	row := ui.Row(c.Key("taskbar-player")).Fill().Padding(2, 18, 2, 3).Gap(3).
++		AlignItems(ui.Center).Background(ui.Transparent)
++	row.Children(func() {
++		info := ui.ButtonBase(c.Key("track")).Grow(1).Shrink(1).MinWidth(artSize).
++			Height(h - 4).Gap(7).AlignItems(ui.Center).FocusRing(false).
++			Label(T("Open Now Playing")).Tooltip(T("Drag to move the taskbar player")).Cursor(ui.CursorGrab)
++		info.Children(func() {
++			if tr != nil {
++				a.cover(c.Key("cover"), tr.Album.ImageURL, 96, artSize, 6).Shrink(0)
++			} else {
++				ui.Box(c).Size(artSize, artSize).Shrink(0).Radius(6).Background(p.hover).Center().
++					Children(func() { ui.Icon(c, iconNote).Size(14, 14).TextColor(p.faint) })
++			}
++			if compact {
++				return
++			}
++			title, subtitle := T("Not Playing"), mygo.App.Name()
++			frame := taskbarLyricFrame{}
++			if tr != nil {
++				title, subtitle = tr.Name, tr.ArtistNames()
++				if pl.Loading() {
++					subtitle = T("Buffering…")
++				} else {
++					lines, _ := pl.Lyrics()
++					frame = taskbarLyricAt(lines, pl.Position(), pl.Playing())
++					if strings.TrimSpace(frame.text) != "" {
++						subtitle = frame.text
++					}
++					if frame.next > 0 {
++						c.After(frame.next)
++					}
++				}
++			}
++			ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(0).Children(func() {
++				ui.Text(c, title).FontSize(titleSize).FontWeight(500).TextColor(p.muted).SingleLine()
++				if len(frame.words) > 0 {
++					taskbarLyricText(c.Key("lyric"), frame, lyricSize, p.text)
++				} else {
++					ui.Text(c, subtitle).FontSize(lyricSize).FontWeight(650).LineHeight(1.15).TextColor(p.text).SingleLine()
++				}
++			})
++		})
++		wasDragging := a.taskbarWidgetDrag(info)
++		if a.taskbarGesture.active {
++			info.Cursor(ui.CursorGrabbing)
++		}
++		if info.Clicked() && !wasDragging {
++			if tr != nil {
++				a.nowPlaying = true
++			}
++			a.showMain()
++			a.redraw()
++		}
++
++		if !short && iconButton(c.Key("previous"), iconPrev, iconSize, p.text, T("Previous")).
++			Size(controlSize, controlSize).Shrink(0).Disabled(!available).Tooltip(T("Previous")).Clicked() {
++			pl.Prev()
++		}
++		play := ui.ButtonBase(c.Key("play")).Size(playWidth, playHeight).Center().Radius(999).
++			Background(p.text.Alpha(0.08)).TextColor(p.text).Shrink(0).Disabled(!available).
++			Label(T("Play/Pause")).Tooltip(T("Play/Pause"))
++		if play.Hovered() {
++			play.Background(p.text.Alpha(0.15))
++		}
++		play.Children(func() { playPause(c, play, pl.Playing(), playSize) })
++		if play.Clicked() {
++			pl.TogglePlay()
++		}
++		if iconButton(c.Key("next"), iconNext, iconSize, p.text, T("Next")).
++			Size(controlSize, controlSize).Shrink(0).Disabled(!available).Tooltip(T("Next")).Clicked() {
++			pl.Next()
++		}
++		if !short {
++			a.taskbarWidgetLike(c.Key("like"), tr, iconSize)
++		}
++	})
++	close := ui.ButtonBase(c.Key("close-taskbar")).Absolute().Right(0).Top(0).Size(16, 16).
++		Radius(8).Center().Label(T("Close taskbar player")).Tooltip(T("Close taskbar player"))
++	// Watch the whole native surface, including interactive children and
++	// transparent padding. Only the original corner remains a close target.
++	_, _, pointerOver := c.Root().PointerPosition()
++	if pointerOver || close.FocusVisible() {
++		close.Background(p.text.Alpha(0.13))
++		close.Children(func() { ui.Icon(c, iconX).Size(9, 9).TextColor(p.muted) })
++	}
++	if close.Clicked() {
++		a.dismissTaskbarWidget()
++	}
++	// This window still asks about its heart when the main view is hidden.
++	// Playback changes repaint the other windows only when their signature
++	// changes; paused and idle bars do not request a continuing timer.
++	a.askLikes()
++	a.syncWindows()
++}
++
++// A press still opens the main player; only moving beyond the small drag
++// threshold changes docking. Canceled pointer capture never commits it.
++func (a *app) taskbarWidgetDrag(info ui.Element) bool {
++	g := &a.taskbarGesture
++	wasDragging := g.active
++	dx, dy, held := info.Dragged()
++	if held {
++		g.x, g.y = g.x+dx, g.y+dy
++		if !g.active && g.x*g.x+g.y*g.y >= 16 {
++			g.active = true
++			a.beginTaskbarDragFrom(g.x)
++		}
++		if g.active {
++			a.updateTaskbarDrag()
++		}
++	} else {
++		if g.active {
++			if info.PressCanceled() {
++				a.cancelTaskbarDrag()
++			} else {
++				a.endTaskbarDrag()
++			}
++		}
++		*g = taskbarWidgetGesture{}
++	}
++	return wasDragging || g.active
++}
++
++// Paint each word twice: its dim outline, then the sung portion clipped to
++// playback progress. The same calculation also follows long lines in a
++// narrow slot, without an independent scrolling animation.
++func taskbarLyricText(c *ui.Context, frame taskbarLyricFrame, size float32, color ui.Color) {
++	ui.Box(c).FillWidth().Height(size * 1.3).Label(frame.text).Draw(func(p *ui.Painter, r ui.Rect) {
++		widths := make([]float32, len(frame.words))
++		total, sung, height := float32(0), float32(0), float32(0)
++		for i, word := range frame.words {
++			width, h := p.MeasureText(0, ui.Span{Text: word.Text, Size: size, Weight: 650})
++			widths[i], height = width, max(height, h)
++			if frame.progress[i] > 0 {
++				sung = total + width*frame.progress[i]
++			}
++			total += width
++		}
++		x, y := r.X-taskbarLyricOffset(total, r.W, sung), r.Y+(r.H-height)/2
++		p.Clip(r, 0, func() {
++			for i, word := range frame.words {
++				span := ui.Span{Text: word.Text, Size: size, Weight: 650, Color: color.Alpha(0.43)}
++				p.RichText(x, y, 0, span)
++				if lit := frame.progress[i]; lit > 0 {
++					span.Color = color
++					p.Clip(ui.Rect{X: x, Y: r.Y, W: widths[i] * lit, H: r.H}, 0, func() { p.RichText(x, y, 0, span) })
++				}
++				x += widths[i]
++			}
++		})
++	})
++}
++
++// taskbarWidgetLike keeps a read-only source's heart visible, while only
++// sources that support changing likes get the existing like action.
++func (a *app) taskbarWidgetLike(c *ui.Context, tr *music.Track, size float32) {
++	if tr != nil && a.trackLib(tr).canLike(tr) {
++		a.likeButton(c, tr, size, a.pal.muted).Shrink(0)
++		return
++	}
++	icon, color := iconHeart, a.pal.faint
++	if tr != nil {
++		a.wantLike(tr)
++		if a.isLiked(tr) {
++			icon, color = iconHeartFill, a.pal.accent
++		}
++	}
++	hint := T("This source does not support liking songs")
++	if tr == nil {
++		hint = T("Not Playing")
++	}
++	// The wrapper owns the tooltip, so it can explain a disabled button.
++	ui.Box(c).Shrink(0).Tooltip(hint).Children(func() {
++		iconButton(c, icon, size, color, T("Like")).Disabled(true)
++	})
++}
+--- /dev/null
++++ b/internal/app/taskbar_widget_view_windows_test.go
+@@ -0,0 +1,351 @@
++package app
++
++import (
++	"fmt"
++	"testing"
++	"time"
++
++	"github.com/egoist/mygo/ui"
++
++	"mygo-music/internal/lyrics"
++	"mygo-music/internal/music"
++)
++
++// The taskbar's controls change the same queue and playback state as the
++// full player, including when only its compact controls fit.
++func TestTaskbarWidgetTransport(t *testing.T) {
++	for _, bounds := range [][2]int{{388, 40}, {248, 40}, {200, 40}, {108, 40}, {388, 28}} {
++		width, height := bounds[0], bounds[1]
++		t.Run(fmt.Sprintf("%dx%d", width, height), func(t *testing.T) {
++			a := newTestApp()
++			a.pl.Cue([]music.Track{song("1", "First"), song("2", "Second"), song("3", "Third")})
++			a.pl.SetLyrics(nil)
++			tt := ui.NewTester(a.taskbarWidgetView, width, height)
++			tt.Frame()
++			if err := tt.Click("Next"); err != nil {
++				t.Fatal(err)
++			}
++			if a.pl.Current().ID != "2" || !a.pl.Playing() {
++				t.Fatalf("next: track %s, playing %v", a.pl.Current().ID, a.pl.Playing())
++			}
++			if err := tt.Click("Play/Pause"); err != nil {
++				t.Fatal(err)
++			}
++			if a.pl.Playing() {
++				t.Fatal("taskbar did not pause the player")
++			}
++			if width >= 240 {
++				if err := tt.Click("Previous"); err != nil {
++					t.Fatal(err)
++				}
++				if a.pl.Current().ID != "1" {
++					t.Fatalf("previous stayed on %s", a.pl.Current().ID)
++				}
++			}
++			if err := tt.Click("Open Now Playing"); err != nil {
++				t.Fatal(err)
++			}
++			if !a.nowPlaying {
++				t.Fatal("the cover did not open Now Playing")
++			}
++		})
++	}
++}
++
++type taskbarWidgetProbe struct{ begun, updated, ended, canceled, synced, closed int }
++
++func (p *taskbarWidgetProbe) beginDrag()  { p.begun++ }
++func (p *taskbarWidgetProbe) updateDrag() { p.updated++ }
++func (p *taskbarWidgetProbe) endDrag()    { p.ended++ }
++func (p *taskbarWidgetProbe) cancelDrag() { p.canceled++ }
++func (p *taskbarWidgetProbe) sync()       { p.synced++ }
++func (p *taskbarWidgetProbe) close()      { p.closed++ }
++
++// Moving the cover/text sends one drag lifecycle instead of opening the
++// main player, while an ordinary click remains the open action.
++func TestTaskbarWidgetDragDoesNotOpen(t *testing.T) {
++	a := newTestApp()
++	a.pl.Cue([]music.Track{song("1", "First")})
++	a.pl.SetLyrics(nil)
++	probe := &taskbarWidgetProbe{}
++	a.taskbar = probe
++	tt := ui.NewTester(a.taskbarWidgetView, 388, 40)
++	tt.Frame()
++	r, ok := tt.Find("Open Now Playing")
++	if !ok {
++		t.Fatal("missing track drag surface")
++	}
++	x, y := r.X+12, r.Y+r.H/2
++	tt.Press(x, y)
++	tt.Frame()
++	tt.Move(x+25, y)
++	tt.Frame()
++	tt.Move(x+90, y)
++	tt.Frame()
++	tt.Release(x+90, y)
++	tt.Frame()
++	tt.Frame()
++	if probe.begun != 1 || probe.updated == 0 || probe.ended != 1 || a.nowPlaying {
++		t.Fatalf("drag lifecycle=%+v, opened=%v", probe, a.nowPlaying)
++	}
++	if err := tt.Click("Open Now Playing"); err != nil {
++		t.Fatal(err)
++	}
++	if !a.nowPlaying {
++		t.Fatal("click after dragging did not open the player")
++	}
++}
++
++// Closing the small panel disables and persists only that panel, while
++// leaving the currently playing queue untouched and still controllable.
++func TestTaskbarWidgetCloseKeepsPlayback(t *testing.T) {
++	a := newTestApp()
++	a.settings.TaskbarPlayer = true
++	a.pl.Cue([]music.Track{song("1", "First")})
++	a.pl.Hold(time.Second)
++	a.pl.SetLyrics(nil)
++	probe := &taskbarWidgetProbe{}
++	a.taskbar = probe
++	tt := ui.NewTester(a.taskbarWidgetView, 200, 40)
++	tt.Frame()
++	if err := tt.Click("Close taskbar player"); err != nil {
++		t.Fatal(err)
++	}
++	if a.settings.TaskbarPlayer || !a.pl.Playing() || a.pl.Current().ID != "1" || probe.closed != 0 || probe.synced == 0 {
++		t.Fatalf("close changed playback or did not hide panel: settings=%v playing=%v probe=%+v", a.settings.TaskbarPlayer, a.pl.Playing(), probe)
++	}
++}
++
++func taskbarCloseCoverage(tt *ui.Tester, r ui.Rect) uint64 {
++	im := tt.Image()
++	var alpha uint64
++	for y := int(r.Y); y < int(r.Y+r.H); y++ {
++		for x := int(r.X); x < int(r.X+r.W); x++ {
++			_, _, _, a := im.At(x, y).RGBA()
++			alpha += uint64(a)
++		}
++	}
++	return alpha
++}
++
++// The close glyph used to require hovering its corner; entering the cover,
++// lyrics, transport controls or padding must reveal it without enlarging its hit target.
++func TestTaskbarWidgetCloseRevealsAcrossPlayer(t *testing.T) {
++	for _, width := range []int{388, 248, 200, 108} {
++		t.Run(fmt.Sprint(width), func(t *testing.T) {
++			a := newTestApp()
++			a.settings.TaskbarPlayer = true
++			a.pl.Cue([]music.Track{song("1", "First")})
++			a.pl.Hold(time.Second)
++			a.pl.SetLyrics([]lyrics.Line{{At: 0, End: 10 * time.Second, Text: "Current lyric"}})
++			tt := ui.NewTester(a.taskbarWidgetView, width, 40)
++			tt.Frame()
++			close, ok := tt.Find("Close taskbar player")
++			if !ok {
++				t.Fatal("missing close hit area")
++			}
++			tt.Move(-10, -10)
++			tt.Frame()
++			if taskbarCloseCoverage(tt, close) != 0 {
++				t.Fatal("close is painted outside the player")
++			}
++			info, ok := tt.Find("Open Now Playing")
++			if !ok {
++				t.Fatal("missing track surface")
++			}
++			points := []ui.Point{{X: info.X + 10, Y: info.Y + info.H/2}, {X: .5, Y: .5}}
++			labels := []string{"Play/Pause", "Next", "Close taskbar player"}
++			if width >= 190 {
++				labels = append(labels, "Current lyric")
++			}
++			if width >= 240 {
++				labels = append(labels, "Previous", "Like")
++			}
++			for _, label := range labels {
++				r, ok := tt.Find(label)
++				if !ok {
++					t.Fatalf("missing hover target %s", label)
++				}
++				points = append(points, ui.Point{X: r.X + r.W/2, Y: r.Y + r.H/2})
++			}
++			for _, point := range points {
++				tt.Move(point.X, point.Y)
++				tt.Frame()
++				if taskbarCloseCoverage(tt, close) == 0 {
++					t.Fatalf("hover at %v did not reveal close", point)
++				}
++				tt.Move(float32(width)+5, 45)
++				tt.Frame()
++				if taskbarCloseCoverage(tt, close) != 0 {
++					t.Fatalf("close stayed visible after leaving %v", point)
++				}
++			}
++			tt.Move(info.X+10, info.Y+info.H/2)
++			tt.Frame()
++			if tt.Cursor() != ui.CursorGrab {
++				t.Fatal("track area lost the drag cursor")
++			}
++			if err := tt.Click("Play/Pause"); err != nil {
++				t.Fatal(err)
++			}
++			if !a.settings.TaskbarPlayer {
++				t.Fatal("play control was replaced by a larger close target")
++			}
++			if err := tt.Click("Close taskbar player"); err != nil {
++				t.Fatal(err)
++			}
++			if a.settings.TaskbarPlayer {
++				t.Fatal("revealed close control did not hide the taskbar player")
++			}
++		})
++	}
++}
++
++// Keyboard navigation still reveals and activates the close control when
++// the pointer is outside the taskbar player.
++func TestTaskbarWidgetCloseRevealsForKeyboard(t *testing.T) {
++	a := newTestApp()
++	a.settings.TaskbarPlayer = true
++	tt := ui.NewTester(a.taskbarWidgetView, 388, 40)
++	tt.Frame()
++	tt.Move(-10, -10)
++	tt.Frame()
++	r, ok := tt.Find("Close taskbar player")
++	if !ok {
++		t.Fatal("missing close target")
++	}
++	for range 8 {
++		tt.Key(0, ui.KeyTab)
++		tt.Frame()
++		if close, found := tt.Access("Close taskbar player"); found && close.Focused {
++			if taskbarCloseCoverage(tt, r) == 0 {
++				t.Fatal("keyboard focus did not reveal close")
++			}
++			tt.Key(0, ui.KeyEnter)
++			tt.Frame()
++			if a.settings.TaskbarPlayer {
++				t.Fatal("keyboard could not close the player")
++			}
++			return
++		}
++	}
++	t.Fatal("close target could not be reached with Tab")
++}
++
++// With the main window absent, the taskbar still asks for the current
++// heart and sends the opposite state when the listener presses it.
++func TestTaskbarWidgetLikeWithoutMainView(t *testing.T) {
++	a := newTestApp()
++	ch := posts(a)
++	asked, changed := make(chan []string, 1), make(chan bool, 1)
++	fake(a).isLiked = func(ids []string) (map[string]bool, error) {
++		asked <- ids
++		return map[string]bool{"1": true}, nil
++	}
++	fake(a).like = func(_ string, on bool) error { changed <- on; return nil }
++	a.account = &music.Account{ID: "listener"}
++	a.pl.Cue([]music.Track{song("1", "First")})
++	a.pl.SetLyrics(nil)
++	tt := ui.NewTester(a.taskbarWidgetView, 248, 40)
++	tt.Frame()
++	if ids := wait(t, asked, "the current heart"); len(ids) != 1 || ids[0] != "1" {
++		t.Fatalf("asked for likes of %v", ids)
++	}
++	runPost(t, ch)
++	tt.Frame()
++	if err := tt.Click("Unlike"); err != nil {
++		t.Fatal(err)
++	}
++	if a.isLiked(a.pl.Current()) || wait(t, changed, "the unlike") {
++		t.Fatal("the heart did not unlike the current song")
++	}
++}
++
++// A source whose likes can only be read keeps that state when its
++// disabled heart is pressed, without issuing a write to the source.
++func TestTaskbarWidgetReadOnlyHeart(t *testing.T) {
++	a := newTestApp()
++	without(a, "like")
++	a.account = &music.Account{ID: "listener"}
++	a.liked = map[string]bool{"1": true}
++	writes := make(chan bool, 1)
++	fake(a).like = func(_ string, on bool) error { writes <- on; return nil }
++	a.pl.Cue([]music.Track{song("1", "First")})
++	a.pl.SetLyrics(nil)
++	tt := ui.NewTester(a.taskbarWidgetView, 388, 40)
++	tt.Frame()
++	if heart, ok := tt.AccessByRole(ui.RoleButton, "Like"); !ok || !heart.Disabled {
++		t.Fatal("the source cannot change likes, but its heart is actionable")
++	}
++	r, ok := tt.Find("Like")
++	if !ok {
++		t.Fatal("no read-only heart to press")
++	}
++	tt.ClickAt(r.X+r.W/2, r.Y+r.H/2)
++	if !a.isLiked(a.pl.Current()) {
++		t.Fatal("pressing the read-only heart changed its state")
++	}
++	select {
++	case <-writes:
++		t.Fatal("the read-only heart wrote to its source")
++	default:
++	}
++}
++
++// Without a queued track, pressing the taskbar controls cannot start
++// playback, and opening the app does not open an empty Now Playing view.
++func TestTaskbarWidgetEmptyControls(t *testing.T) {
++	a := newTestApp()
++	tt := ui.NewTester(a.taskbarWidgetView, 388, 40)
++	tt.Frame()
++	for _, label := range []string{"Previous", "Play/Pause", "Next", "Like"} {
++		if control, ok := tt.AccessByRole(ui.RoleButton, label); !ok || !control.Disabled {
++			t.Fatalf("%s is actionable without a track", label)
++		}
++		r, ok := tt.Find(label)
++		if !ok {
++			t.Fatalf("no %s control to press", label)
++		}
++		tt.ClickAt(r.X+r.W/2, r.Y+r.H/2)
++	}
++	if a.pl.Current() != nil || a.pl.Playing() {
++		t.Fatal("an empty taskbar started playback")
++	}
++	if err := tt.Click("Open Now Playing"); err != nil {
++		t.Fatal(err)
++	}
++	if a.nowPlaying {
++		t.Fatal("opened Now Playing with no current track")
++	}
++}
++
++// With MM_FRAMES set, saves the taskbar at each width in both appearances.
++func TestTaskbarWidgetFrames(t *testing.T) {
++	dir := framesDir(t)
++	for _, dark := range []bool{false, true} {
++		for _, width := range []int{388, 248, 200, 108} {
++			a := newTestApp()
++			tracks := framesTracks(a)
++			tracks[0].Name = "如果可以"
++			tracks[0].Artists = []music.Artist{{Name: "韦礼安"}}
++			a.pl.Cue(tracks)
++			a.pl.Hold(3500 * time.Millisecond)
++			a.pl.SetLyrics(lyrics.FromSource(&music.Lyrics{Lines: []music.LyricLine{{Start: 0, End: 10000, Text: "未曾想这情一字多么长", Words: []music.LyricWord{
++				{Text: "未", Start: 0, End: 1000}, {Text: "曾", Start: 1000, End: 2000}, {Text: "想", Start: 2000, End: 3000}, {Text: "这", Start: 3000, End: 4000}, {Text: "情", Start: 4000, End: 5000}, {Text: "一", Start: 5000, End: 6000}, {Text: "字", Start: 6000, End: 7000}, {Text: "多", Start: 7000, End: 8000}, {Text: "么", Start: 8000, End: 9000}, {Text: "长", Start: 9000, End: 10000},
++			}}}}))
++			tt := ui.NewTester(func(c *ui.Context) {
++				a.taskbarWidgetView(c)
++				// Give the transparent player a representative taskbar surface
++				// in previews, so opacity and the word sweep remain visible.
++				background := ui.LightTheme().Background
++				if dark {
++					background = ui.DarkTheme().Background
++				}
++				c.Root().Background(background)
++			}, width, 40)
++			tt.SetDark(dark)
++			settled(tt)
++			saveFrame(t, dir, fmt.Sprintf("taskbar-%d-dark-%v.png", width, dark), tt.Image())
++		}
++	}
++}
+--- /dev/null
++++ b/internal/app/taskbar_windows.go
+@@ -0,0 +1,449 @@
++//go:build windows
++
++package app
++
++import (
++	"runtime"
++	"sync/atomic"
++	"time"
++	"unsafe"
++
++	"github.com/egoist/mygo"
++	"github.com/egoist/mygo/ui"
++	"golang.org/x/sys/windows"
++)
++
++var (
++	taskbarUser32            = windows.NewLazySystemDLL("user32.dll")
++	taskbarGetRect           = taskbarUser32.NewProc("GetWindowRect")
++	taskbarGetCursor         = taskbarUser32.NewProc("GetCursorPos")
++	taskbarGetAsyncKey       = taskbarUser32.NewProc("GetAsyncKeyState")
++	taskbarGetCapture        = taskbarUser32.NewProc("GetCapture")
++	taskbarReleaseCapture    = taskbarUser32.NewProc("ReleaseCapture")
++	taskbarGetClass          = taskbarUser32.NewProc("GetClassNameW")
++	taskbarVisible           = taskbarUser32.NewProc("IsWindowVisible")
++	taskbarEnumWindows       = taskbarUser32.NewProc("EnumWindows")
++	taskbarGetDPI            = taskbarUser32.NewProc("GetDpiForWindow")
++	taskbarSetThreadDPI      = taskbarUser32.NewProc("SetThreadDpiAwarenessContext")
++	taskbarSetPos            = taskbarUser32.NewProc("SetWindowPos")
++	taskbarGetLong           = taskbarUser32.NewProc("GetWindowLongPtrW")
++	taskbarSetLong           = taskbarUser32.NewProc("SetWindowLongPtrW")
++	taskbarForeground        = taskbarUser32.NewProc("GetForegroundWindow")
++	taskbarAncestor          = taskbarUser32.NewProc("GetAncestor")
++	taskbarLayeredAttributes = taskbarUser32.NewProc("GetLayeredWindowAttributes")
++	taskbarMonitorFromWindow = taskbarUser32.NewProc("MonitorFromWindow")
++	taskbarGetMonitorInfo    = taskbarUser32.NewProc("GetMonitorInfoW")
++	taskbarDWM               = windows.NewLazySystemDLL("dwmapi.dll")
++	taskbarGetDWMAttribute   = taskbarDWM.NewProc("DwmGetWindowAttribute")
++	taskbarSetDWMAttribute   = taskbarDWM.NewProc("DwmSetWindowAttribute")
++)
++
++type windowsTaskbar struct {
++	a           *app
++	win         *mygo.Window
++	hwnd        uintptr
++	preview     *mygo.Window
++	previewHWND uintptr // assigned before watch starts; stable until shutdown
++	stop        chan struct{}
++	wake        chan struct{}
++	enabled     atomic.Bool
++	closed      bool              // UI thread only
++	slots       taskbarPlacements // UI thread only; measured on the worker
++	dragging    bool
++	dragSide    string
++	dragStart   taskbarRect
++	dragGrabX   int32
++	dragPoll    chan struct{} // UI-thread owner; closed for release/cancel/disable
++}
++
++func (a *app) installTaskbar() {
++	if a.taskbar != nil {
++		return
++	}
++	w := &windowsTaskbar{a: a, stop: make(chan struct{}), wake: make(chan struct{}, 1)}
++	w.win = mygo.NewWindow(mygo.WindowOptions{
++		Title: "MyGo Taskbar Player", Panel: true, Hidden: true,
++		Frameless: true, Transparent: true, DisableShadow: true,
++		// DisableMove also blocks SetWindowPos. The view handles pointer
++		// dragging itself so the panel can only land in measured safe slots.
++		DisableResize: true, DisableMinimize: true,
++		DisableMaximize: true, Width: 388, Height: 40,
++		Content: ui.View(a.taskbarWidgetView),
++	})
++	w.hwnd = w.win.NativeHandle()
++	// Panel enables DWM's rounded outline even for a frameless transparent
++	// window. Suppress that system frame as well as the view's own border.
++	// Windows 10 ignores these Windows 11 attributes and stays frameless.
++	borderNone, squareCorners := uint32(0xfffffffe), uint32(1)
++	taskbarSetDWMAttribute.Call(w.hwnd, 34, uintptr(unsafe.Pointer(&borderNone)), 4)
++	taskbarSetDWMAttribute.Call(w.hwnd, 33, uintptr(unsafe.Pointer(&squareCorners)), 4)
++	// Own top-level window only: never inject into or reparent to Explorer.
++	// Retaining MyGo's owner makes the panel survive an Explorer restart.
++	const exStyle = ^uintptr(19) // GWL_EXSTYLE = -20
++	style, _, _ := taskbarGetLong.Call(w.hwnd, exStyle)
++	taskbarSetLong.Call(w.hwnd, exStyle, style|0x08000000|0x80) // NOACTIVATE, TOOLWINDOW
++	w.win.OnClose(func(e *mygo.CloseEvent) {
++		if !w.closed && !a.quitting {
++			e.PreventDefault()
++		}
++	})
++	w.preview = mygo.NewWindow(mygo.WindowOptions{
++		Title: "MyGo Taskbar Snap Preview", Panel: true, Hidden: true,
++		Frameless: true, Transparent: true, DisableShadow: true,
++		DisableResize: true, DisableMinimize: true, DisableMaximize: true,
++		DisableClose: true, Width: 388, Height: 40,
++		Content: ui.View(a.taskbarSnapPreviewView),
++	})
++	w.previewHWND = w.preview.NativeHandle()
++	// This pane is only a visual destination, never an input surface. The
++	// framework combines WS_EX_TRANSPARENT and WS_EX_LAYERED for actual
++	// click-through behavior, including over another application's window.
++	w.preview.SetIgnoreMouseEvents(true)
++	style, _, _ = taskbarGetLong.Call(w.previewHWND, exStyle)
++	taskbarSetLong.Call(w.previewHWND, exStyle, style|0x08000000|0x80)
++	taskbarSetDWMAttribute.Call(w.previewHWND, 34, uintptr(unsafe.Pointer(&borderNone)), 4)
++	taskbarSetDWMAttribute.Call(w.previewHWND, 33, uintptr(unsafe.Pointer(&squareCorners)), 4)
++	w.preview.OnClose(func(e *mygo.CloseEvent) {
++		if !w.closed && !a.quitting {
++			e.PreventDefault()
++			w.preview.Hide()
++		}
++	})
++	a.taskbar = w
++	w.sync()
++	go w.watch()
++}
++
++func (w *windowsTaskbar) sync() {
++	if w.closed {
++		return
++	}
++	on := w.a.settings.TaskbarPlayer && !w.a.quitting
++	changed := w.enabled.Swap(on) != on
++	if !on {
++		w.hideSnapPreview()
++		w.stopDragPolling()
++		w.dragging = false
++		w.releaseDragCapture()
++		w.win.Hide()
++	} else {
++		if !w.dragging {
++			w.hideSnapPreview()
++			r, ok := w.slots.forSide(w.a.settings.TaskbarSide)
++			w.apply(r, ok)
++		}
++		w.win.Invalidate()
++	}
++	if changed {
++		select {
++		case w.wake <- struct{}{}:
++		default:
++		}
++	}
++}
++
++func (w *windowsTaskbar) close() {
++	if w.closed {
++		return
++	}
++	w.closed = true
++	w.hideSnapPreview()
++	w.stopDragPolling()
++	w.dragging = false
++	w.releaseDragCapture()
++	w.enabled.Store(false)
++	close(w.stop)
++	if w.preview != nil {
++		w.preview.Destroy()
++	}
++	w.win.Destroy()
++}
++
++func (w *windowsTaskbar) watch() {
++	// UI Automation clients run on a dedicated MTA thread, never the UI
++	// thread: a slow/unresponsive Explorer must not freeze audio or controls.
++	runtime.LockOSThread()
++	defer runtime.UnlockOSThread()
++	probe := newTaskbarProbe()
++	if probe == nil {
++		return
++	} // no trustworthy control bounds: remain hidden
++	defer probe.close()
++	ticker := time.NewTicker(time.Second)
++	defer ticker.Stop()
++	for {
++		if w.enabled.Load() {
++			slots := probe.placements(w.hwnd, w.previewHWND)
++			mygo.RunOnMain(func() { w.applyPlacements(slots) })
++		}
++		select {
++		case <-w.stop:
++			return
++		case <-ticker.C:
++		case <-w.wake:
++		}
++	}
++}
++
++func (w *windowsTaskbar) applyPlacements(slots taskbarPlacements) {
++	if w.closed {
++		return
++	}
++	w.slots = slots
++	if w.dragging {
++		w.updateDrag()
++		return
++	}
++	r, ok := slots.forSide(w.a.settings.TaskbarSide)
++	w.apply(r, ok)
++}
++
++func (w *windowsTaskbar) beginDrag() {
++	w.beginDragFrom(0)
++}
++
++func (w *windowsTaskbar) beginDragFrom(deltaX float32) {
++	if w.closed || !w.enabled.Load() || !w.slots.bar.valid() {
++		return
++	}
++	var point struct{ X, Y int32 }
++	if ok, _, _ := taskbarGetCursor.Call(uintptr(unsafe.Pointer(&point))); ok == 0 {
++		return
++	}
++	start, ok := taskbarWindowRect(w.hwnd)
++	if !ok {
++		return
++	}
++	dpi, _, _ := taskbarGetDPI.Call(w.hwnd)
++	if dpi == 0 {
++		return
++	}
++	w.stopDragPolling()
++	w.dragStart = start
++	w.dragGrabX = taskbarDragGrabOffset(start, point.X, deltaX, uint32(dpi))
++	w.dragging = true
++	w.dragSide = normalizedTaskbarSide(w.a.settings.TaskbarSide)
++	w.updateDrag()
++	if !w.dragging {
++		return
++	}
++	// A NOACTIVATE panel cannot rely on SetCapture for moves and releases
++	// outside its HWND. Poll only while this one real drag is in progress,
++	// without a global hook or a continuing animation while paused.
++	done := make(chan struct{})
++	w.dragPoll = done
++	go func() {
++		ticker := time.NewTicker(16 * time.Millisecond)
++		defer ticker.Stop()
++		for {
++			select {
++			case <-done:
++				return
++			case <-w.stop:
++				return
++			case <-ticker.C:
++				mygo.RunOnMain(func() {
++					if w.dragPoll == done {
++						w.pollDrag()
++					}
++				})
++			}
++		}
++	}()
++}
++
++func (w *windowsTaskbar) stopDragPolling() {
++	if w.dragPoll != nil {
++		close(w.dragPoll)
++		w.dragPoll = nil
++	}
++}
++
++func (w *windowsTaskbar) releaseDragCapture() {
++	capture, _, _ := taskbarGetCapture.Call()
++	if capture == 0 {
++		return
++	}
++	root, _, _ := taskbarAncestor.Call(capture, 2) // GA_ROOT
++	if capture == w.hwnd || root == w.hwnd {
++		// Give MyGo its normal capture-canceled message if the real mouse
++		// release happened outside this nonactive window. Never release a
++		// different app's capture, and never synthesize mouse input.
++		taskbarReleaseCapture.Call()
++	}
++}
++
++func (w *windowsTaskbar) pollDrag() {
++	if w.closed || !w.dragging || !w.enabled.Load() {
++		w.hideSnapPreview()
++		w.stopDragPolling()
++		return
++	}
++	escape, _, _ := taskbarGetAsyncKey.Call(0x1b)
++	if escape&0x8000 != 0 {
++		w.cancelDrag()
++		return
++	}
++	down, _, _ := taskbarGetAsyncKey.Call(0x01) // VK_LBUTTON
++	if down&0x8000 == 0 {
++		w.endDrag()
++		return
++	}
++	w.updateDrag()
++}
++
++func (w *windowsTaskbar) updateDrag() {
++	if !w.dragging || w.closed || !w.enabled.Load() {
++		return
++	}
++	var point struct{ X, Y int32 }
++	if ok, _, _ := taskbarGetCursor.Call(uintptr(unsafe.Pointer(&point))); ok == 0 {
++		return
++	}
++	w.dragSide = taskbarSideAtCursor(w.slots.bar, point.X)
++	r, ok := taskbarDragPlacement(w.slots.bar, w.dragStart, w.dragGrabX, point.X)
++	if !ok {
++		w.cancelDrag()
++		return
++	}
++	w.updateSnapPreview()
++	// A held but stationary mouse needs no placement or rendering work.
++	if current, valid := taskbarWindowRect(w.hwnd); valid && current == r {
++		return
++	}
++	w.apply(r, ok)
++}
++
++func (w *windowsTaskbar) endDrag() {
++	if !w.dragging {
++		return
++	}
++	w.updateDrag()
++	if !w.dragging {
++		return
++	}
++	w.stopDragPolling()
++	w.dragging = false
++	w.hideSnapPreview()
++	w.a.setTaskbarSide(w.dragSide)
++	r, ok := w.slots.forSide(w.a.settings.TaskbarSide)
++	w.apply(r, ok)
++	w.releaseDragCapture()
++}
++
++func (w *windowsTaskbar) cancelDrag() {
++	w.hideSnapPreview()
++	if !w.dragging {
++		w.stopDragPolling()
++		return
++	}
++	w.stopDragPolling()
++	w.dragging = false
++	r, ok := w.slots.forSide(w.a.settings.TaskbarSide)
++	w.apply(r, ok)
++	w.releaseDragCapture()
++}
++
++func (w *windowsTaskbar) hideSnapPreview() {
++	if w.preview != nil && w.preview.IsVisible() {
++		w.preview.Hide()
++	}
++}
++
++func (w *windowsTaskbar) updateSnapPreview() {
++	r, ok := taskbarSnapPreviewPlacement(w.slots, w.dragSide, w.dragging && w.enabled.Load() && !w.closed)
++	if w.preview == nil || !ok {
++		w.hideSnapPreview()
++		return
++	}
++	current, valid := taskbarWindowRect(w.previewHWND)
++	if valid && current == r && w.preview.IsVisible() {
++		return
++	}
++	// Use physical coordinates, including on mixed-DPI/negative monitors.
++	// A changed rectangle stays hidden until WM_DPICHANGED has settled.
++	w.hideSnapPreview()
++	const flags = 0x10 | 0x200 // NOACTIVATE | NOOWNERZORDER
++	place := func() {
++		// Insert behind the player's HWND within the topmost band. Neither
++		// moving nor revealing the preview ever activates it or takes capture.
++		taskbarSetPos.Call(w.previewHWND, w.hwnd, uintptr(r.Left), uintptr(r.Top), uintptr(r.width()), uintptr(r.height()), flags)
++	}
++	place()
++	current, valid = taskbarWindowRect(w.previewHWND)
++	if !valid || current != r {
++		place()
++		current, valid = taskbarWindowRect(w.previewHWND)
++	}
++	if !valid || current != r {
++		return
++	}
++	w.preview.ShowInactive()
++	// Showing a panel can raise it. Reassert the player's place in front.
++	place()
++	w.preview.Invalidate()
++}
++
++func (w *windowsTaskbar) apply(r taskbarRect, ok bool) {
++	if w.closed {
++		return
++	}
++	if !ok || !w.enabled.Load() {
++		w.hideSnapPreview()
++		w.win.Hide()
++		return
++	}
++	// Position in physical pixels; Windows delivers WM_DPICHANGED to MyGo,
++	// which scales native text/icons at the destination monitor's DPI.
++	// Do not SetForegroundWindow: media clicks leave the current app focused.
++	const flags = 0x10 | 0x200 // NOACTIVATE | NOOWNERZORDER
++	current, valid := taskbarWindowRect(w.hwnd)
++	if (!valid || current != r) && !w.dragging {
++		w.win.Hide()
++	}
++	place := func() {
++		taskbarSetPos.Call(w.hwnd, ^uintptr(0), uintptr(r.Left), uintptr(r.Top), uintptr(r.width()), uintptr(r.height()), flags)
++	}
++	place()
++	current, valid = taskbarWindowRect(w.hwnd)
++	if !valid || current != r {
++		// Crossing monitors sends WM_DPICHANGED synchronously. MyGo accepts
++		// its suggested bounds, which may scale these already physical bounds
++		// a second time. The DPI is now settled; place once more at the exact
++		// safe rectangle, and never reveal an oversized intermediate window.
++		place()
++		current, valid = taskbarWindowRect(w.hwnd)
++	}
++	if !valid || current != r {
++		w.hideSnapPreview()
++		w.win.Hide()
++		return
++	}
++	if !w.win.IsVisible() {
++		w.win.ShowInactive()
++	}
++	w.win.Invalidate()
++}
++
++func taskbarWindowRect(hwnd uintptr) (taskbarRect, bool) {
++	var r taskbarRect
++	ok, _, _ := taskbarGetRect.Call(hwnd, uintptr(unsafe.Pointer(&r)))
++	return r, ok != 0 && r.valid()
++}
++
++func taskbarWindowClass(hwnd uintptr) string {
++	var name [256]uint16
++	n, _, _ := taskbarGetClass.Call(hwnd, uintptr(unsafe.Pointer(&name[0])), uintptr(len(name)))
++	return windows.UTF16ToString(name[:min(int(n), len(name))])
++}
++
++func taskbarWindowShown(hwnd uintptr) bool {
++	visible, _, _ := taskbarVisible.Call(hwnd)
++	if visible == 0 {
++		return false
++	}
++	// A window on another virtual desktop remains WS_VISIBLE but is cloaked.
++	var cloaked uint32
++	hr, _, _ := taskbarGetDWMAttribute.Call(hwnd, 14, uintptr(unsafe.Pointer(&cloaked)), 4)
++	return int32(hr) < 0 || cloaked == 0
++}
+--- /dev/null
++++ b/internal/app/taskbar_windows_test.go
+@@ -0,0 +1,95 @@
++//go:build windows
++
++package app
++
++import (
++	"os"
++	"runtime"
++	"testing"
++	"unsafe"
++)
++
++func TestTaskbarNativeRectangleLayout(t *testing.T) {
++	// IUIAutomationElement::get_CachedBoundingRectangle writes a Windows
++	// RECT (four LONGs), not four doubles or Go architecture-sized ints.
++	var r taskbarRect
++	if unsafe.Sizeof(r) != 16 || unsafe.Offsetof(r.Right) != 8 || unsafe.Offsetof(r.Bottom) != 12 {
++		t.Fatal("rectangle does not match the Win32 RECT ABI")
++	}
++}
++
++// A visible destination frame must not reserve its own slot, while other widgets still do.
++func TestTaskbarProbeExcludesOnlyItsOwnPreview(t *testing.T) {
++	for _, tc := range []struct {
++		hwnd uintptr
++		want bool
++	}{
++		{10, true},  // the actual player
++		{20, true},  // the taskbar itself
++		{30, true},  // this player's explicit snap-preview window
++		{40, false}, // another music widget must still reserve space
++	} {
++		if got := taskbarProbeIgnoresWindow(tc.hwnd, 10, 20, []uintptr{30, 0}); got != tc.want {
++			t.Fatalf("window %d ignored=%v, want %v", tc.hwnd, got, tc.want)
++		}
++	}
++	if taskbarProbeIgnoresWindow(30, 10, 20, nil) {
++		t.Fatal("a window without the explicit preview identity was ignored")
++	}
++}
++
++func TestTaskbarOcclusionRespectsOverlayAndZOrder(t *testing.T) {
++	bar := taskbarRect{0, 1552, 2560, 1600}
++	full := taskbarRect{0, 0, 2560, 1600}
++	widget := taskbarRect{10, 1556, 398, 1596}
++	for _, tc := range []struct {
++		name                string
++		rect                taskbarRect
++		style               uintptr
++		above, active, want bool
++	}{
++		{"transparent HUD", full, 0x20, true, false, false},
++		{"inactive large overlay", full, 0x08000000, true, false, false},
++		{"foreground fullscreen", full, 0, true, true, true},
++		{"other music widget", widget, 0x08000000, true, false, true},
++		{"click-through lyrics widget", widget, 0x08000020, true, false, true},
++		{"widget behind taskbar", widget, 0x08000000, false, false, false},
++		{"maximized resize border", taskbarRect{0, 0, 2560, 1559}, 0, true, true, false},
++	} {
++		if got := taskbarWindowOccludes(bar, tc.rect, tc.style, tc.above, tc.active); got != tc.want {
++			t.Errorf("%s: got %v want %v", tc.name, got, tc.want)
++		}
++	}
++}
++
++// Opt-in read-only integration diagnostic. It creates no window, performs no
++// input, and prints only classes, styles and geometry (never window titles).
++func TestTaskbarReadOnlyProbe(t *testing.T) {
++	if os.Getenv("MYGO_TASKBAR_PROBE") != "1" {
++		t.Skip("set MYGO_TASKBAR_PROBE=1 for live taskbar geometry")
++	}
++	runtime.LockOSThread()
++	defer runtime.UnlockOSThread()
++	p := newTaskbarProbe()
++	if p == nil {
++		t.Fatal("UI Automation initialization failed")
++	}
++	defer p.close()
++	foreground, _, _ := taskbarForeground.Call()
++	for _, w := range taskbarSnapshotWindows() {
++		t.Logf("class=%q rect=%+v exStyle=%#x foreground=%v", w.class, w.rect, w.exStyle, w.hwnd == foreground)
++		if w.class == "MyGoWindow" && w.rect.height() <= 120 {
++			// BORDER_COLOR is set-only; its getter returns E_INVALIDARG.
++			var corner uint32
++			cornerHR, _, _ := taskbarGetDWMAttribute.Call(w.hwnd, 33, uintptr(unsafe.Pointer(&corner)), 4)
++			t.Logf("taskbar DWM corner=%d HRESULT=%#x", corner, uint32(cornerHR))
++		}
++		if w.class == "Shell_TrayWnd" || w.class == "Shell_SecondaryTrayWnd" {
++			rects, ok := p.occupied(w.hwnd)
++			dpi, _, _ := taskbarGetDPI.Call(w.hwnd)
++			t.Logf("taskbar dpi=%d UIA=%v occupied=%v", dpi, ok, rects)
++		}
++	}
++	r, ok := p.place(0)
++	t.Logf("placement available=%v rect=%+v", ok, r)
++}
+--- a/internal/app/ui_browse.go
++++ b/internal/app/ui_browse.go
+@@ -139,12 +139,16 @@
+ 	rowShows
+ 	rowStations
+ 	rowLinks
++	rowActions
++	rowCompactStations
++	rowModeButtons
++	rowModeCovers
+ 	rowEmpty
+ )
+ 
+ // browseLayout lays out page in rows. The first section of Home, if tracks, is
+ // the card that leads it.
+-func browseLayout(page *music.Browse, pageID string, cols int) []browseRow {
++func browseLayout(page *music.Browse, pageID string, cols, compactCols, modeCols int) []browseRow {
+ 	var rows []browseRow
+ 	cards := func(kind rowKind, s, n int) {
+ 		for from := 0; from < n; from += cols {
+@@ -170,8 +174,37 @@
+ 		cards(rowArtists, s, len(sec.Artists))
+ 		cards(rowPlaylists, s, len(sec.Playlists))
+ 		cards(rowShows, s, len(sec.Shows))
+-		cards(rowStations, s, len(sec.Stations))
+-		cards(rowLinks, s, len(sec.Links))
++		switch sec.Layout {
++		case "compact":
++			for from := 0; from < len(sec.Stations); from += compactCols {
++				rows = append(rows, browseRow{rowCompactStations, s, from, min(from+compactCols, len(sec.Stations))})
++			}
++		case "mode-buttons", "mode-covers":
++			kind := rowModeButtons
++			if sec.Layout == "mode-covers" {
++				kind = rowModeCovers
++			}
++			for from := 0; from < len(sec.Stations); from += modeCols {
++				rows = append(rows, browseRow{kind, s, from, min(from+modeCols, len(sec.Stations))})
++			}
++		default:
++			cards(rowStations, s, len(sec.Stations))
++		}
++		// Keep the source's order, but don't give an action a square empty
++		// cover. A run of actual artwork still uses the existing card grid.
++		for from := 0; from < len(sec.Links); {
++			if sec.Links[from].ImageURL == "" {
++				rows = append(rows, browseRow{rowActions, s, from, from + 1})
++				from++
++				continue
++			}
++			to := from + 1
++			for to < len(sec.Links) && to-from < cols && sec.Links[to].ImageURL != "" {
++				to++
++			}
++			rows = append(rows, browseRow{rowLinks, s, from, to})
++			from = to
++		}
+ 		if sec.Empty != "" && len(sec.Tracks)+len(sec.Albums)+len(sec.Artists)+len(sec.Playlists)+len(sec.Shows)+len(sec.Stations)+len(sec.Links) == 0 {
+ 			rows = append(rows, browseRow{rowEmpty, s, 0, 0})
+ 		}
+@@ -182,7 +215,10 @@
+ // browseRows shows a page under a header, which scrolls with it.
+ func (a *app) browseRows(c *ui.Context, page *music.Browse, pageID string, header func(c *ui.Context)) {
+ 	cols := a.columns(c, 156)
+-	layout := browseLayout(page, pageID, cols)
++	w, _ := c.Size()
++	compactCols := max(1, min(3, int((w-sidebarWidth-2*pagePad+12)/252)))
++	modeCols := max(1, min(4, int((w-sidebarWidth-2*pagePad+18)/202)))
++	layout := browseLayout(page, pageID, cols, compactCols, modeCols)
+ 	top, bottom := a.insets(c)
+ 	a.underTop, a.underBottom = true, true
+ 	rows := len(layout) + 1
+@@ -207,6 +243,9 @@
+ 			below := float32(0)
+ 			if i < len(layout) && layout[i].section == r.section {
+ 				below = cardRowGap
++				if layout[i].kind == rowActions {
++					below = 14
++				}
+ 			}
+ 			ui.Box(c).Padding(0, 12, below, 12).Children(func() { a.featureCard(c, sec, pageID, r.section, now) })
+ 		case rowTitle:
+@@ -215,6 +254,25 @@
+ 			a.trackRow(c, sec.Tracks, r.from, true, "")
+ 		case rowEmpty:
+ 			ui.Column(c).Margin(0, 12, cardRowGap, 12).Children(func() { a.empty(c, sec.Empty) })
++		case rowActions:
++			ui.Box(c).Margin(0, 12, 10, 12).Children(func() { a.browseAction(c.Key(sec.Links[r.from].Page), &sec.Links[r.from]) })
++		case rowCompactStations:
++			ui.Grid(c).Columns(compactCols).GapX(12).Margin(0, 12, 12, 12).Children(func() {
++				for at := r.from; at < r.to; at++ {
++					a.compactStationCard(c.Key(sec.Stations[at].ID), &sec.Stations[at])
++				}
++			})
++		case rowModeButtons, rowModeCovers:
++			ui.Grid(c).Columns(modeCols).GapX(18).Margin(0, 12, 18, 12).Children(func() {
++				for at := r.from; at < r.to; at++ {
++					st := &sec.Stations[at]
++					if r.kind == rowModeButtons {
++						a.modeStationButton(c.Key(st.ID), st)
++					} else {
++						a.modeStationCover(c.Key(st.ID), st)
++					}
++				}
++			})
+ 		default:
+ 			a.cardRow(c, sec, r, cols)
+ 		}
+@@ -228,7 +286,10 @@
+ 		margin = 0
+ 	}
+ 	ui.Row(c).Margin(margin, 12, 14, 12).AlignItems(ui.Baseline).Children(func() {
+-		ui.Text(c, sec.Title).FontSize(19).FontWeight(700).LetterSpacing(-0.3).Grow(1).Shrink(1).MinWidth(0)
++		title := ui.Text(c, sec.Title).FontSize(19).FontWeight(700).LetterSpacing(-0.3).Grow(1).Shrink(1).MinWidth(0)
++		if sec.Layout == "mode-buttons" || sec.Layout == "mode-covers" {
++			title.FontSize(15).FontWeight(600).TextColor(a.pal.muted)
++		}
+ 		if sec.MorePage != "" {
+ 			more := ui.ButtonBase(c.Key("more")).Padding(2, 8).Radius(6).FocusRing(false).Label(T("See All"))
+ 			if more.Hovered() {
+@@ -264,11 +325,21 @@
+ 			case rowLinks:
+ 				l := &sec.Links[i]
+ 				if a.coverCard(c.Key(l.Page), l.Title, l.ImageURL, l.Subtitle, nil) {
+-					a.open(route{page: pageBrowse, id: l.Page})
++					a.openBrowseLink(l)
+ 				}
+ 			}
+ 		}
+ 	})
++}
++
++// openBrowseLink keeps regular navigation cached while explicit actions can
++// request fresh results even when the same destination was recently opened.
++func (a *app) openBrowseLink(link *music.Link) {
++	lib := a.library
++	a.open(route{page: pageBrowse, id: link.Page})
++	if link.Reload {
++		a.loadBrowse(lib, link.Page, true)
++	}
+ }
+ 
+ // sectionOf finds the section a section's page shows.
+--- a/internal/app/ui_like.go
++++ b/internal/app/ui_like.go
+@@ -121,9 +121,14 @@
+ 	if tr.ShowID != "" {
+ 		send = lib.src.LikeEpisode
+ 	}
++	who := lib.listener()
+ 	go func() {
+ 		err := send(id, like)
+ 		a.post(func() {
++			// A late response belongs to the listener who clicked the heart.
++			if lib.listener() != who {
++				return
++			}
+ 			if err != nil {
+ 				if lib.liked != nil {
+ 					lib.liked[id] = !like
+--- /dev/null
++++ b/internal/app/ui_listening_modes.go
+@@ -0,0 +1,73 @@
++package app
++
++import (
++	"github.com/egoist/mygo/ui"
++
++	"mygo-music/internal/music"
++)
++
++// modeStationButton gives common modes one large target with a source-supplied
++// monochrome icon; transparent white artwork follows both application themes.
++func (a *app) modeStationButton(c *ui.Context, st *music.Station) {
++	p := a.pal
++	b := ui.ButtonBase(c).Row().Height(72).Padding(14, 18).Gap(12).AlignItems(ui.Center).
++		Radius(14).Label(st.Name).FocusRingColor(p.accent).Background(p.hover)
++	if b.Hovered() || b.Pressed() {
++		b.Background(p.press)
++	}
++	b.Children(func() {
++		bmp := bitmap(a.art.get(sized(st.IconURL, 96), false))
++		icon := ui.Box(c).Size(30, 30).Shrink(0).Center()
++		if bmp == nil {
++			icon.Children(func() { ui.Icon(c, iconRadio).Size(27, 27).TextColor(p.text) })
++		} else {
++			icon.Draw(func(painter *ui.Painter, r ui.Rect) {
++				w, h := bmp.Size()
++				if w <= 0 || h <= 0 {
++					return
++				}
++				scale := min(r.W/float32(w), r.H/float32(h))
++				dst := ui.Rect{X: r.X + (r.W-float32(w)*scale)/2, Y: r.Y + (r.H-float32(h)*scale)/2, W: float32(w) * scale, H: float32(h) * scale}
++				painter.ImageRegion(bmp, ui.Rect{}, dst, ui.ImageOptions{Tint: p.text})
++			})
++		}
++		ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(3).Children(func() {
++			ui.Text(c, st.Name).FontSize(16).FontWeight(600).TextColor(p.text).SingleLine()
++			if st.Description != "" {
++				ui.Text(c, st.Description).FontSize(12.5).TextColor(p.muted).SingleLine()
++			}
++		})
++	})
++	if b.Clicked() {
++		a.playStation(a.library, st)
++	}
++}
++
++// modeStationCover keeps exploration artwork and its description together in
++// a landscape radio button. The lower scrim preserves readable white copy.
++func (a *app) modeStationCover(c *ui.Context, st *music.Station) {
++	p := a.pal
++	b := ui.ButtonBase(c).AspectRatio(1.5).MinHeight(140).MaxHeight(230).Radius(14).
++		Label(st.Name).FocusRingColor(p.accent).Background(p.hover)
++	b.Children(func() {
++		a.coverFill(c, st.ImageURL, 600, 14)
++		ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Radius(14).PassThrough().
++			LinearGradient(ui.LinearGradient{Angle: 180, Stops: []ui.GradientStop{
++				{Color: ui.RGBA(0, 0, 0, 0.05), At: 0},
++				{Color: ui.RGBA(0, 0, 0, 0.12), At: 0.3},
++				{Color: ui.RGBA(0, 0, 0, 0.7), At: 1},
++			}})
++		ui.Column(c).Absolute().Left(14).Right(14).Bottom(14).Gap(4).PassThrough().Children(func() {
++			ui.Text(c, st.Name).FontSize(18).FontWeight(700).TextColor(white).MaxLines(2).LineHeight(1.2)
++			if st.Description != "" {
++				ui.Text(c, st.Description).FontSize(13.5).TextColor(white.Alpha(0.86)).MaxLines(2).LineHeight(1.35)
++			}
++		})
++		if b.Hovered() || b.Pressed() {
++			ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Radius(14).PassThrough().Background(white.Alpha(0.06))
++		}
++	})
++	if b.Clicked() {
++		a.playStation(a.library, st)
++	}
++}
+--- a/internal/app/ui_main.go
++++ b/internal/app/ui_main.go
+@@ -607,13 +607,23 @@
+ // entry for each of the app's pages it can do.
+ func (a *app) sidebarItems() []sidebarItem {
+ 	var items []sidebarItem
+-	nav := a.src.Info().Navigation
++	info := a.src.Info()
++	nav := info.Navigation
+ 	if len(nav) == 0 {
+ 		for _, name := range []string{"home", "liked", "savedAlbums", "stations", "shows"} {
+ 			nav = append(nav, music.NavItem{Builtin: name})
+ 		}
+ 	}
+ 	for _, n := range nav {
++		if n.FallbackForSettingsAction != "" {
++			duplicate := false
++			for _, action := range info.SettingsActions {
++				duplicate = duplicate || action.Page == n.FallbackForSettingsAction
++			}
++			if duplicate {
++				continue
++			}
++		}
+ 		if n.Builtin == "" {
+ 			if a.can("browse") {
+ 				items = append(items, sidebarItem{navIcon(n.Icon), n.Title, route{page: pageBrowse, id: n.Page}})
+--- a/internal/app/ui_pages.go
++++ b/internal/app/ui_pages.go
+@@ -179,6 +179,38 @@
+ 		meta = append(meta, pl.Owner)
+ 	}
+ 	return strings.Join(meta, " · ")
++}
++
++// browseAction is an action/navigation entry without artwork. It stays short
++// and keyboard-focusable rather than pretending to be an empty album cover.
++func (a *app) browseAction(c *ui.Context, link *music.Link) {
++	p := a.pal
++	height := float32(48)
++	if link.Subtitle != "" {
++		height = 64
++	}
++	b := ui.ButtonBase(c).Row().Height(height).Padding(10, 16).Gap(14).
++		AlignItems(ui.Center).Radius(10).Label(link.Title).FocusRingColor(p.accent)
++	b.Background(p.hover)
++	if b.Hovered() || b.Pressed() {
++		b.Background(p.press)
++	}
++	b.Children(func() {
++		ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(3).Children(func() {
++			ui.Text(c, link.Title).FontSize(13.5).FontWeight(600).TextColor(p.text).SingleLine()
++			if link.Subtitle != "" {
++				ui.Text(c, link.Subtitle).FontSize(12).TextColor(p.muted).SingleLine()
++			}
++		})
++		icon := iconForward
++		if link.Reload {
++			icon = iconRefresh
++		}
++		ui.Icon(c, icon).Size(17, 17).Shrink(0).TextColor(p.muted)
++	})
++	if b.Clicked() {
++		a.openBrowseLink(link)
++	}
+ }
+ 
+ // coverCard is a playlist's card, or a show's or a station's: its cover over
+--- a/internal/app/ui_radio.go
++++ b/internal/app/ui_radio.go
+@@ -200,6 +200,35 @@
+ 			}
+ 		}
+ 	})
++}
++
++// compactStationCard is a short station shortcut for sections which opt in.
++// It keeps the station's ordinary play/resume behavior and accessible name.
++func (a *app) compactStationCard(c *ui.Context, st *music.Station) {
++	p := a.pal
++	b := ui.ButtonBase(c).Row().Height(84).Padding(12).Gap(12).AlignItems(ui.Center).
++		Radius(12).Label(st.Name).FocusRingColor(p.accent).Background(p.hover)
++	if b.Hovered() || b.Pressed() {
++		b.Background(p.press)
++	}
++	b.Children(func() {
++		ui.Box(c).Size(48, 48).Shrink(0).Radius(8).Children(func() {
++			a.coverFill(c, st.ImageURL, 120, 8)
++			if st.ImageURL == "" {
++				ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Center().Children(func() { ui.Icon(c, iconRadio).Size(24, 24).TextColor(p.muted) })
++			}
++		})
++		ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(4).Children(func() {
++			ui.Text(c, st.Name).FontSize(13).FontWeight(600).TextColor(p.text).SingleLine()
++			if st.Description != "" {
++				ui.Text(c, st.Description).FontSize(11.5).TextColor(p.muted).MaxLines(2).LineHeight(1.35)
++			}
++		})
++		ui.Icon(c, iconPlay).Size(16, 16).Shrink(0).TextColor(p.accent)
++	})
++	if b.Clicked() {
++		a.playStation(a.library, st)
++	}
+ }
+ 
+ // stationCard is a station's cover over its name: a click plays it.
+--- a/internal/app/ui_settings.go
++++ b/internal/app/ui_settings.go
+@@ -377,6 +377,25 @@
+ 
+ 	add("plugins", T("Plugins"), iconPlug, func(row settingsRow, block settingsBlock) { a.sourceSettings(c, row, block, p) })
+ 
++	if runtime.GOOS == "windows" {
++		add("taskbar-player", T("Taskbar Player"), iconLaptop, func(row settingsRow, block settingsBlock) {
++			row(T("Show the Taskbar Player"), T("Song information and playback controls in free space on the taskbar"), func() {
++				if ui.Switch(c.Key("taskbar-player"), &s.TaskbarPlayer).Label(T("Show the Taskbar Player")).Changed() {
++					a.changed()
++				}
++			})
++			row(T("Taskbar side"), T("Drag the player to either side; occupied taskbar controls stay clear"), func() {
++				at := 0
++				if normalizedTaskbarSide(s.TaskbarSide) == "right" {
++					at = 1
++				}
++				if chosen, changed := choice(c, "taskbar-side", T("Taskbar side"), []string{"Left", "Right"}, at); changed {
++					a.setTaskbarSide([]string{"left", "right"}[chosen])
++				}
++			})
++		})
++	}
++
+ 	// Only on macOS, the one with a notch player.
+ 	if a.notch != nil {
+ 		add("notch", T("Notch Player"), iconLaptop, func(row settingsRow, block settingsBlock) {
+@@ -522,6 +541,9 @@
+ 		text := lib.name()
+ 		for _, st := range lib.src.Info().Settings {
+ 			text += " " + st.Label + " " + st.Help
++		}
++		for _, action := range lib.src.Info().SettingsActions {
++			text += " " + action.Title + " " + action.Subtitle
+ 		}
+ 		block(text, func() { a.pluginSettings(c.Key(lib.id), lib, p) })
+ 	}
+@@ -639,6 +661,28 @@
+ 		if g, ok := lib.src.(guarded); ok {
+ 			a.pluginPermissions(c.Key("permissions"), lib, g, p)
+ 		}
++		if lib.can("browse") {
++			for _, action := range info.SettingsActions {
++				if action.Page == "" || action.Title == "" {
++					continue
++				}
++				ui.Column(c.Key("action-" + action.Page)).Gap(4).Children(func() {
++					d := lib.browses[action.Page]
++					busy := d != nil && d.loading
++					if ui.Button(c.Key("open"), action.Title).Disabled(busy).Clicked() {
++						// The existing browse path preserves process permission checks
++						// and error handling without switching the active music source.
++						a.loadBrowse(lib, action.Page, true)
++					}
++					if action.Subtitle != "" {
++						ui.Text(c, action.Subtitle).FontSize(11.5).TextColor(p.muted).LineHeight(1.4)
++					}
++					if d != nil && d.err != "" {
++						ui.Text(c, d.err).FontSize(11.5).TextColor(p.accent).LineHeight(1.4)
++					}
++				})
++			}
++		}
+ 		for _, st := range info.Settings {
+ 			a.sourceSetting(c.Key(st.Key), lib, st, p)
+ 		}
+--- a/internal/i18n/zh_cn.go
++++ b/internal/i18n/zh_cn.go
+@@ -182,9 +182,19 @@
+ 	"No stations yet":             "暂无电台",
+ 	"Not Playing":                 "未在播放",
+ 	"Notch Player":                "刘海播放器",
+-	"Nothing found":               "没有找到相关结果",
+-	"Nothing here yet":            "这里还什么都没有",
+-	"Now Playing":                 "正在播放",
++	"Taskbar Player":              "任务栏播放器",
++	"Show the Taskbar Player":     "显示任务栏播放器",
++	"Taskbar side":                "任务栏位置",
++	"Left":                        "左侧",
++	"Right":                       "右侧",
++	"Drag the player to either side; occupied taskbar controls stay clear": "拖动播放条切换左右位置，自动避开任务栏按钮",
++	"Close taskbar player":            "关闭任务栏播放条",
++	"Drag to move the taskbar player": "拖动可切换任务栏左右位置",
++	"Song information and playback controls in free space on the taskbar": "在任务栏空白处显示歌曲信息和播放控制",
++	"This source does not support liking songs":                           "此音源暂不支持修改喜欢状态",
++	"Nothing found":    "没有找到相关结果",
++	"Nothing here yet": "这里还什么都没有",
++	"Now Playing":      "正在播放",
+ 	"Now Playing opens out of the cover in the player bar and shrinks back into it, rather than sliding up from the bottom":              "播放页从播放条的封面展开，关闭时缩回封面，而不是从底部滑上来",
+ 	"Now Playing's backdrop turns into fog in the cover's colors, rising with the bass. Still being polished; uses a little more power.": "播放页的背景化作封面色调的烟雾，缓缓升起，随低音起伏；仍在打磨，会多用一些电量",
+ 	"Off":                              "关闭",
+--- a/internal/lyrics/lyrics.go
++++ b/internal/lyrics/lyrics.go
+@@ -20,6 +20,9 @@
+ 	Text        string
+ 	Translation string
+ 	Words       []Word
++	// WordTimed distinguishes source-provided word timing from the estimated
++	// words retained for the main lyric view's existing animation.
++	WordTimed bool
+ }
+ 
+ // A Word is a word of a line, or a character of Chinese or Japanese,
+@@ -73,7 +76,7 @@
+ 	ms := func(n int64) time.Duration { return time.Duration(n) * time.Millisecond }
+ 	out := make([]Line, 0, len(l.Lines))
+ 	for _, sl := range l.Lines {
+-		line := Line{At: ms(sl.Start), End: ms(sl.End), Text: strings.TrimSpace(sl.Text), Translation: sl.Translation}
++		line := Line{At: ms(sl.Start), End: ms(sl.End), Text: strings.TrimSpace(sl.Text), Translation: sl.Translation, WordTimed: len(sl.Words) > 0}
+ 		for _, w := range sl.Words {
+ 			line.Words = append(line.Words, Word{Text: w.Text, Start: ms(w.Start), End: ms(w.End)})
+ 		}
+--- a/internal/lyrics/lyrics_test.go
++++ b/internal/lyrics/lyrics_test.go
+@@ -62,6 +62,9 @@
+ 	if len(l.Words) != 2 || l.Words[1].Start != 13670*time.Millisecond {
+ 		t.Errorf("words %+v", l.Words)
+ 	}
++	if !l.WordTimed || lines[1].WordTimed {
++		t.Errorf("source timing provenance lost: timed=%v, estimated=%v", l.WordTimed, lines[1].WordTimed)
++	}
+ 	if lines[1].End != 26*time.Second || len(lines[1].Words) != 2 {
+ 		t.Errorf("plain line %+v", lines[1])
+ 	}
+@@ -70,7 +73,7 @@
+ // With no lines of its own, a source's LRC is used.
+ func TestFromSourceLRC(t *testing.T) {
+ 	lines := FromSource(&music.Lyrics{LRC: "[00:01.00]One", Translation: "[00:01.00]Uno"})
+-	if len(lines) != 1 || lines[0].Translation != "Uno" {
++	if len(lines) != 1 || lines[0].Translation != "Uno" || lines[0].WordTimed {
+ 		t.Errorf("lines %+v", lines)
+ 	}
+ }
+--- a/internal/music/music.go
++++ b/internal/music/music.go
+@@ -163,6 +163,9 @@
+ 	Name        string `json:"name"`
+ 	Description string `json:"description,omitempty"`
+ 	ImageURL    string `json:"imageUrl,omitempty"`
++	// IconURL is optional white-on-transparent artwork for mode-buttons.
++	// ImageURL remains the full cover used by other layouts and older hosts.
++	IconURL string `json:"iconUrl,omitempty"`
+ }
+ 
+ // Comment is what a listener said of a track.
+@@ -199,6 +202,10 @@
+ // Section is a heading over what it lists. A section may hold several kinds,
+ // shown in the order of the fields.
+ type Section struct {
++	// Layout "compact" shows stations as short horizontal cards;
++	// "mode-buttons" uses monochrome icons and "mode-covers" overlays names
++	// on landscape artwork. Unknown values and other content are unchanged.
++	Layout    string     `json:"layout,omitempty"`
+ 	Title     string     `json:"title,omitempty"`
+ 	Tracks    []Track    `json:"tracks,omitempty"`
+ 	Albums    []Album    `json:"albums,omitempty"`
+@@ -227,6 +234,9 @@
+ 	Subtitle string `json:"subtitle,omitempty"`
+ 	ImageURL string `json:"imageUrl,omitempty"`
+ 	Page     string `json:"page"`
++	// Reload asks for fresh page data on every click, for refresh/retry
++	// actions. Ordinary navigation keeps the usual page cache.
++	Reload bool `json:"reload,omitempty"`
+ }
+ 
+ // NavItem is an entry of the sidebar: a Browse page of the source's own, by
+@@ -234,6 +244,9 @@
+ type NavItem struct {
+ 	Title string `json:"title"`
+ 	Page  string `json:"page,omitempty"`
++	// FallbackForSettingsAction keeps an entry on older hosts, but lets a host
++	// with the matching settings action omit the duplicate sidebar shortcut.
++	FallbackForSettingsAction string `json:"fallbackForSettingsAction,omitempty"`
+ 	// Builtin is home, liked, savedAlbums, stations or shows. One the source
+ 	// can't do doesn't show.
+ 	Builtin string `json:"builtin,omitempty"`
+@@ -323,6 +336,9 @@
+ 	Version  string    `json:"version,omitempty"`
+ 	Playback Playback  `json:"playback"`
+ 	Settings []Setting `json:"settings,omitempty"`
++	// SettingsActions are explicit plugin actions in the plugin management page.
++	// Like browse links, they run only after the listener clicks them.
++	SettingsActions []Link `json:"settingsActions,omitempty"`
+ 	// Navigation is the sidebar while the source is active, in this order. With
+ 	// none, the sidebar has an entry for each of the app's pages the source can do.
+ 	Navigation []NavItem `json:"navigation,omitempty"`
+--- a/internal/player/player_test.go
++++ b/internal/player/player_test.go
+@@ -239,7 +239,9 @@
+ 		return nil, music.ErrUnavailable
+ 	}
+ 	path, err := filepath.Abs("testdata/seek.mp3")
+-	return &music.Stream{URL: "file://" + filepath.ToSlash(path), Type: "mp3"}, err
++	// Concatenating file:// made the Windows drive a URL host, so every
++	// supposedly playable fixture failed to open before queue logic ran.
++	return &music.Stream{URL: music.FileURL(path), Type: "mp3"}, err
+ }
+ 
+ // pickyQueue is a, b and c, of which b can't play.
+--- a/internal/plugin/plugin.go
++++ b/internal/plugin/plugin.go
+@@ -653,6 +653,10 @@
+ 	for i, st := range info.Settings {
+ 		info.Settings[i].Label, info.Settings[i].Help = p.t(st.Label), p.t(st.Help)
+ 	}
++	info.SettingsActions = slices.Clone(info.SettingsActions)
++	for i, action := range info.SettingsActions {
++		info.SettingsActions[i].Title, info.SettingsActions[i].Subtitle = p.t(action.Title), p.t(action.Subtitle)
++	}
+ 	info.Navigation = slices.Clone(info.Navigation)
+ 	for i, n := range info.Navigation {
+ 		info.Navigation[i].Title = p.t(n.Title)
