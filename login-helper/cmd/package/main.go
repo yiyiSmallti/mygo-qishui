@@ -7,6 +7,7 @@ import (
 	"debug/macho"
 	"debug/pe"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -20,14 +21,15 @@ import (
 func main() {
 	root := flag.String("root", "..", "repository root")
 	native := flag.String("native", "../dist/login-helper", "native build directory")
+	style := flag.String("style", "../dist/style-support/windows-amd64", "Windows layout player and corresponding source")
 	out := flag.String("out", "../dist", "output directory")
 	flag.Parse()
-	if err := run(*root, *native, *out); err != nil {
+	if err := run(*root, *native, *style, *out); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
-func run(root, native, out string) error {
+func run(root, native, style, out string) error {
 	if err := os.MkdirAll(out, 0755); err != nil {
 		return err
 	}
@@ -67,6 +69,61 @@ func run(root, native, out string) error {
 			if strings.Contains(string(content), marker) {
 				return fmt.Errorf("refusing QA binary in production package")
 			}
+		}
+		var layoutManifest []byte
+		if platform == "windows-amd64" {
+			player := filepath.Join(style, "MyGo Music.exe")
+			p, err := pe.Open(player)
+			if err != nil {
+				return fmt.Errorf("build the Windows layout player first: %w", err)
+			}
+			valid := p.Machine == pe.IMAGE_FILE_MACHINE_AMD64
+			p.Close()
+			if !valid {
+				return fmt.Errorf("wrong layout player architecture")
+			}
+			bytes, err := os.ReadFile(player)
+			if err != nil {
+				return err
+			}
+
+			for _, blocked := range []string{"MYGO_NATIVE_QA_MODE", "MYGO_QA_PLUGIN_DIR"} {
+				if strings.Contains(string(bytes), blocked) {
+					return fmt.Errorf("refusing QA layout player")
+				}
+			}
+			playerHash := sha256.Sum256(bytes)
+			sourcePath := filepath.Join(style, "corresponding-source.zip")
+			archive, err := zip.OpenReader(sourcePath)
+			if err != nil {
+				return err
+			}
+			present := map[string]bool{}
+			for _, f := range archive.File {
+				present[f.Name] = true
+			}
+			archive.Close()
+			for _, name := range []string{"mygo-music/LICENSE", "mygo-music/internal/app/ui_listening_modes.go"} {
+				if !present[name] {
+					return fmt.Errorf("layout source archive lacks %s", name)
+				}
+			}
+			source, err := os.ReadFile(sourcePath)
+			if err != nil {
+				return err
+			}
+			sourceHash := sha256.Sum256(source)
+			installerPath := filepath.Join(native, platform, "style-installer.exe")
+			installer, err := pe.Open(installerPath)
+			if err != nil {
+				return err
+			}
+			valid = installer.Machine == pe.IMAGE_FILE_MACHINE_AMD64
+			installer.Close()
+			if !valid {
+				return fmt.Errorf("wrong style installer architecture")
+			}
+			layoutManifest, _ = json.Marshal(map[string]any{"schema": 1, "baseVersion": "0.1.22", "payloadSha256": hex.EncodeToString(playerHash[:]), "sourceSha256": hex.EncodeToString(sourceHash[:])})
 		}
 		archive := filepath.Join(out, "plugin-"+platform+".zip")
 		file, err := os.Create(archive)
@@ -120,6 +177,24 @@ func run(root, native, out string) error {
 		})
 		if err == nil {
 			err = add(binary, filepath.Join("native", name), 0755)
+		}
+		if err == nil && platform == "windows-amd64" {
+			for _, entry := range []struct{ path, name string }{
+				{filepath.Join(native, platform, "style-installer.exe"), "native/style-installer.exe"},
+				{filepath.Join(style, "MyGo Music.exe"), "native/layout-player.exe"},
+				{filepath.Join(style, "corresponding-source.zip"), "native/layout-corresponding-source.zip"},
+			} {
+				if err = add(entry.path, entry.name, 0755); err != nil {
+					break
+				}
+			}
+			if err == nil {
+				var entry io.Writer
+				entry, err = writer.Create("native/layout-manifest.json")
+				if err == nil {
+					_, err = entry.Write(layoutManifest)
+				}
+			}
 		}
 		closeErr := writer.Close()
 		file.Close()

@@ -1,7 +1,7 @@
 {
   "id": "qishui-account",
   "name": "汽水音乐",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "main": "index.js",
   "playback": "stream",
   "permissions": { "network": ["api.qishui.com"], "process": true },
@@ -13,6 +13,7 @@
     { "page": "listening", "title": "听歌模式", "icon": "radio" },
     { "builtin": "liked", "title": "喜欢的音乐" },
     { "page": "library", "title": "音乐库", "icon": "note" },
-    { "builtin": "savedAlbums", "title": "收藏专辑" }
+    { "builtin": "savedAlbums", "title": "收藏专辑" },
+    { "page": "appearance", "title": "界面增强", "icon": "star" }
   ]
 }

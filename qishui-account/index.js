@@ -4,7 +4,7 @@ const ORIGIN = 'https://api.qishui.com';
 const SESSION = 'qishui-session-v1';
 const DIAGNOSTIC = 'qishui-login-diagnostic-v1';
 const DEVICE = 'qishui-device-v1';
-const VERSION = '0.6.2';
+const VERSION = '0.6.4';
 const UA = {
   windows: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   darwin: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -974,7 +974,45 @@ export async function home() {
   return { title: user.name + '的汽水音乐', subtitle: '来自当前汽水账号的音乐库', sections };
 }
 
+let appearanceSequence = 0;
+function appearancePage(opened = false) {
+  const supported = host.platform === 'windows' && host.arch === 'amd64';
+  const next = Date.now().toString(36) + '-' + (++appearanceSequence).toString(36);
+  return {
+    title: '小图标样式增强',
+    description: supported
+      ? (opened ? '安装助手已打开。请在助手中查看检查结果；只有确认安装才会关闭并重启 MyGo。' : '为原版 MyGo 添加小图标听歌模式。安装组件已随插件提供，无需另外下载安装包。') + '\n仅支持已验证的 Windows MyGo 0.1.22；安装前请保存设置并暂停播放。原程序和已保存的数据会备份，账号与插件保留。'
+      : '此样式安装助手目前仅支持 Windows x64。Mac 可继续使用汽水插件；此处不会修改播放器。',
+    sections: supported ? [{ links: [{ title: opened ? '再次打开安装助手' : '打开样式安装助手', subtitle: '检查版本、确认安装或查看已安装状态。', page: 'appearance/open/' + next, reload: true }] }] : [],
+  };
+}
+
+async function openAppearanceInstaller() {
+  if (host.platform !== 'windows' || host.arch !== 'amd64') return appearancePage();
+  const child = spawnHelper('./style-helper.cjs');
+  let timer, complete = false;
+  try {
+    child.write(JSON.stringify({ type: 'open-layout-installer' }) + '\n');
+    child.closeStdin();
+    const line = await Promise.race([child.readLine(), new Promise((_, reject) => {
+      timer = setTimeout(() => reject(failure('样式安装助手启动超时，请重试。', 'setup')), 15000);
+    })]);
+    if (typeof line !== 'string' || line.length > 1024) throw failure('样式安装助手没有返回有效结果，请重新安装 Windows 插件包。', 'setup');
+    let value;
+    try { value = JSON.parse(line); } catch { throw failure('样式安装助手没有返回有效结果，请重新安装 Windows 插件包。', 'setup'); }
+    if (value.type !== 'ready' || !['ready', 'busy'].includes(value.status)) throw failure('样式安装助手未能启动，请重新安装完整的 Windows 插件包。', 'setup');
+    complete = true;
+    return appearancePage(true);
+  } finally {
+    clearTimeout(timer);
+    // The launcher exits on its own; only its detached native dialog stays.
+    if (!complete) { try { child.kill(); } catch {} }
+  }
+}
+
 export async function browse({ page } = {}) {
+  if (page === 'appearance') return appearancePage();
+  if (/^appearance\/open\/[0-9a-z-]{1,80}$/.test(page || '')) return openAppearanceInstaller();
   if (page === 'listening') {
     const context = musicContext(), catalog = await recommendationService.catalog();
     musicCurrent(context);

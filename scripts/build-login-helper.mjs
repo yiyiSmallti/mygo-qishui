@@ -13,6 +13,12 @@ for (const [os, arch, name] of [['windows', 'amd64', 'qishui-login.exe'], ['darw
     cwd: join(root, 'login-helper'), env: { ...process.env, CGO_ENABLED: '0', GOOS: os, GOARCH: arch }, stdio: 'inherit',
   });
   if (result.error || result.status !== 0) throw new Error(`构建 ${os}/${arch} 登录组件失败。`, { cause: result.error });
+  if (os === 'windows') {
+    const installer = spawnSync('go', ['build', '-buildvcs=false', '-trimpath', `-ldflags=${flags}`, '-o', join(target, 'style-installer.exe'), './cmd/style-installer'], {
+      cwd: join(root, 'login-helper'), env: { ...process.env, CGO_ENABLED: '0', GOOS: os, GOARCH: arch }, stdio: 'inherit',
+    });
+    if (installer.error || installer.status !== 0) throw new Error('构建 Windows 样式安装助手失败。', { cause: installer.error });
+  }
   chmodSync(path, 0o755);
   if (os === 'darwin' && process.platform === 'darwin') {
     const signed = spawnSync('/usr/bin/codesign', ['--force', '--sign', '-', path], { stdio: 'inherit' });

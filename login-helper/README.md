@@ -8,6 +8,7 @@
 
 ```sh
 node scripts/build-login-helper.mjs
+node scripts/build-style-player.mjs <未修改的-MyGo-v0.1.22-源码目录>
 go -C login-helper run ./cmd/package -root .. -native ../dist/login-helper -out ../dist
 ```
 
@@ -34,3 +35,11 @@ go -C login-helper run ./cmd/package -root .. -native ../dist/login-helper -out 
 向验证程序设置 `MYGO_QA_PLUGIN_DIR`、`MYGO_QA_STORAGE`（只读取现有匿名设备记录）、`MYGO_NATIVE_QA_MODE`、`MYGO_NATIVE_QA_RESULT`、`MYGO_NATIVE_QA_SCREENSHOT` 和 `MYGO_STOCK_QA_RESULT`。`mfa-success` / `mfa-cancel` 使用真实随包 React 渲染、点击与卸载受控验证组件，检查依赖在官方脚本入口前可用；该受控组件不替代真实账号的官方验证。模式为 `mfa-success`、`mfa-cancel`、`qr-origin`、`qr-token`、`unsafe-error`、`bootstrap`、`navigation-failure`。`bootstrap` 断言本地宿主页标记与页面 URL/来源一致；`navigation-failure` 在真实取码后导航到不存在的域名，必须返回 `load`。验证会创建临时插件数据，检查旧会话保留与原账号文件不变，不扫描或确认真实账号；截图会先隐藏二维码。
 
 Mac 已通过上述原版入口取码和窗口验证，Windows 本轮只完成交叉编译，真实账号确认及平台二次验证仍需在目标电脑完成。
+
+## 随插件安装的样式增强（0.6.4）
+
+Windows ZIP 包含 `native/style-installer.exe`、`native/layout-player.exe`、校验清单和完整对应源码。后者只在 v0.1.22 上加五个布局文件，不包含任务栏、登录或歌词改动。原版主程序没有插件安装钩子，因此插件提供明确的「界面增强」入口；首次安装仍需要用户确认关闭并重启主程序，不能仅靠图片或 CSS 改变原生布局。
+
+Node 启动器绑定其真实 MyGo 父进程，使用私有管道完成双向交接后退出；独立原生助手不会被插件退出连带终止。助手以持有的进程 handle、创建时间、路径和已知 SHA-256 绑定目标，默认取消。已安装、取消及未知程序分支不创建备份或写 AppData；确认后才在用户私有目录备份数据与原程序，验证同目录文件未变，只原子替换 EXE。重启失败会恢复原文件，并独立检查原程序是否恢复运行；不请求管理员权限，不创建计划任务或自启动项，不依赖 PowerShell。
+
+构建样式组件使用 `scripts/build-style-player.mjs`；打包器的 `-style` 指定组件目录。Mac ZIP 不带 Windows 二进制或源码包。官方主程序更新可能覆盖增强，届时需要重新检查兼容版本。
