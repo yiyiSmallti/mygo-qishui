@@ -2,9 +2,11 @@
 
 在 MyGo Music 中使用汽水音乐账号，收听喜欢的歌曲、浏览歌单、搜索音乐，并持续播放个性推荐与场景电台。支持 Windows x64 与 macOS Apple Silicon。
 
-当前版本 **0.6.7**，兼容原版 **MyGo Music v0.1.22**。播放保留 AAC-LC／FLAC 原编码，无需安装 FFmpeg。Windows 还提供可选的小图标听歌模式和任务栏播放条，增强助手随插件提供。
+当前版本 **0.6.8**，兼容原版 **MyGo Music v0.1.22**。播放保留 AAC-LC／FLAC 原编码，无需安装 FFmpeg。Windows 还提供可选的小图标听歌模式和任务栏播放条，增强助手随插件提供。
 
-[下载最新版](https://github.com/yiyiSmallti/mygo-qishui/releases/tag/v0.6.7) · [详细使用指南](qishui-account/README.md) · [历史变更与验证记录](docs/history.md) · [反馈问题](https://github.com/yiyiSmallti/mygo-qishui/issues)
+**0.6.8：Mac 也无需安装汽水客户端。** Apple Silicon Mac 首次自动下载约 18 MiB 的官方精简归档，校验后只提取四个必需文件；组件约占 9.4 MiB，有效缓存可离线复用。
+
+[下载最新版](https://github.com/yiyiSmallti/mygo-qishui/releases/tag/v0.6.8) · [详细使用指南](qishui-account/README.md) · [历史变更与验证记录](docs/history.md) · [反馈问题](https://github.com/yiyiSmallti/mygo-qishui/issues)
 
 本项目是独立适配，不是 MyGo 或汽水音乐的官方发行版。
 
@@ -13,7 +15,7 @@
 | 平台 | 当前状态 | 安装包 |
 | --- | --- | --- |
 | Windows x64 | 用户已实机测试 0.6.7，反馈暂未发现问题 | `plugin-windows-amd64.zip` |
-| macOS Apple Silicon | 已有会话读取与播放通过，内嵌登录窗口已完成取码与隔离场景检查 | `plugin-darwin-arm64.zip` |
+| macOS Apple Silicon | 免客户端下载与缓存、匿名设备注册、真实授权播放和定位已验证 | `plugin-darwin-arm64.zip` |
 | macOS Intel / Linux | 暂无已验证的安装包 | — |
 
 ## 快速开始
@@ -23,11 +25,11 @@
 3. 启用汽水音乐插件并允许运行辅助程序，在账号菜单选择汽水音乐登录，用手机汽水 App 扫码确认。
 4. 登录后即可访问音乐库、搜索、推荐和听歌模式。出现官方安全验证时，在插件自带登录窗口继续完成。
 
-**Windows 无需安装完整汽水客户端**：缺少组件时，插件从汽水官方安装包下载、校验并提取所需组件。首次准备约需下载 144 MiB，系统 `tar.exe` 需支持该归档格式。**Mac 目前需安装汽水音乐 3.7.0**，用于提供本机签名与授权组件；两端都不需要启动官方客户端，也不读取它的现有账号。依赖详情见 [本机依赖](qishui-account/README.md#本机依赖)。
+**Windows 无需安装完整汽水客户端**：缺少组件时，插件从汽水官方安装包下载、校验并提取所需组件。首次准备约需下载 144 MiB，系统 `tar.exe` 需支持该归档格式。**Apple Silicon Mac 也会自动准备组件**，首次约需下载 18 MiB 的官方精简归档。两端都不需要启动官方客户端，也不读取它的现有账号。依赖详情见 [本机依赖](qishui-account/README.md#本机依赖)。
 
 ### 已安装用户如何更新
 
-GitHub 来源插件在 **汽水插件菜单 → 检查更新** 中升级到 0.6.7。本机来源插件下载相应平台 ZIP，从本机升级即可。保留 `plugin-data`，已有账号和有效缓存可继续使用。
+GitHub 来源插件在 **汽水插件菜单 → 检查更新** 中升级到 0.6.8。本机来源插件下载相应平台 ZIP，从本机升级即可。保留 `plugin-data`，已有账号和有效缓存可继续使用。
 
 原版 MyGo 会定期检查 GitHub 来源插件更新，安装更新仍需主动点击。MyGo 自身的应用更新与汽水插件更新是两个入口。
 
@@ -116,7 +118,7 @@ Windows 安装包已附带增强安装助手。确认安装后可获得以下功
 - 0.6.7 支持当前已适配的 AAC-LC／FLAC 与 CENC 音频。未知加密、分片媒体、密钥轮换或不支持的 AAC 规格会明确提示。
 - 音乐库按接口游标分页：单个歌单最多载入 5000 首，歌单／收藏列表最多 2000 项；未加载完整时会显示说明。
 - 歌单和专辑收藏当前只读。主动点击心形按钮或对应快捷键，才会添加或取消汽水账号中的歌曲喜欢。
-- Node.js、系统网页运行时及汽水签名／授权组件仍需准备；0.6.7 播放不依赖 FFmpeg。Intel Mac 和 Linux 尚无已验证安装包。
+- Node.js 和系统网页运行时仍需准备。Windows x64 与 Apple Silicon Mac 均支持自动准备汽水组件，无需安装官方客户端。播放不依赖 FFmpeg。Intel Mac 和 Linux 尚无已验证安装包。
 
 Windows 0.6.7 的当前实机状态来自用户反馈；各轮自动化检查、真实账号和专项验证的范围见 [验证记录](docs/history.md)。
 
@@ -127,6 +129,8 @@ Windows 0.6.7 的当前实机状态来自用户反馈；各轮自动化检查、
 ```sh
 npm test
 ```
+
+0.6.8 已通过 8 项 Mac 组件准备检查、8 组私有组件真实播放检查和 2 项 Windows 准备锁回归，正式账号数据未修改。`scripts/verify-mac-sdk.mjs` 可复现自动准备与匿名设备注册检查。
 
 当前有 130 项插件回归测试；0.6.7 另通过 21 项加密样本校验和 8 组完整播放流程检查。`scripts/verify-cenc.mjs` 使用生成音频与独立基准核对解密；`scripts/verify-media-pipeline.mjs` 从插件入口覆盖解码、跳转、缓存、并发、取消与异常清理。FFmpeg 仅是这些验证脚本的工具，不是插件播放依赖。
 

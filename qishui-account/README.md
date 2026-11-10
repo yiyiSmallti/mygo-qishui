@@ -1,6 +1,8 @@
 # 汽水音乐插件使用指南
 
-把汽水音乐账号接入 MyGo Music，使用音乐库、搜索、歌词、推荐和场景电台。当前 **0.6.7** 兼容原版 **MyGo Music v0.1.22**，播放无需 FFmpeg；Windows 小图标布局和任务栏播放条可按需安装。
+把汽水音乐账号接入 MyGo Music，使用音乐库、搜索、歌词、推荐和场景电台。当前 **0.6.8** 兼容原版 **MyGo Music v0.1.22**，播放无需 FFmpeg；Windows 小图标布局和任务栏播放条可按需安装。
+
+**0.6.8 的 Apple Silicon Mac 无需安装汽水客户端。** 首次会从官方精简归档自动准备组件，之后可复用缓存。
 
 Windows 用户已于 2026-11-10 实机测试 0.6.7，反馈暂未发现问题。Apple Silicon Mac 已完成已有会话播放、内嵌取码和隔离场景检查。历史版本及验证范围见 [历史记录](../docs/history.md)。
 
@@ -24,9 +26,9 @@ Windows 用户已于 2026-11-10 实机测试 0.6.7，反馈暂未发现问题。
 | 系统 | 发布附件 | 本机准备 |
 | --- | --- | --- |
 | Windows x64 | `plugin-windows-amd64.zip` | Node.js 24+、WebView2 Runtime；所需汽水组件可自动准备 |
-| macOS Apple Silicon | `plugin-darwin-arm64.zip` | ARM64 Node.js 24+、汽水音乐 3.7.0；网页运行时由系统提供 |
+| macOS Apple Silicon | `plugin-darwin-arm64.zip` | ARM64 Node.js 24+；自动准备汽水组件，网页运行时由系统提供 |
 
-首次在 MyGo「设置 → 插件 → ＋ → 从 GitHub 安装」输入 `yiyiSmallti/mygo-qishui`。从本机安装时，请到 [0.6.7 发布页](https://github.com/yiyiSmallti/mygo-qishui/releases/tag/v0.6.7) 下载对应平台 ZIP；源码 ZIP 用于查看或构建，不是插件安装包。
+首次在 MyGo「设置 → 插件 → ＋ → 从 GitHub 安装」输入 `yiyiSmallti/mygo-qishui`。从本机安装时，请到 [0.6.8 发布页](https://github.com/yiyiSmallti/mygo-qishui/releases/tag/v0.6.8) 下载对应平台 ZIP；源码 ZIP 用于查看或构建，不是插件安装包。
 
 启用插件并允许运行辅助程序，然后在账号菜单选择汽水音乐登录。用手机汽水 App 扫码确认，需要安全验证时在插件自带的登录窗口继续。成功后窗口自动关闭；提前关窗会取消本次登录，原账号保留。
 
@@ -52,7 +54,7 @@ Windows 包包含增强管理助手，可安装小图标听歌模式、紧凑推
 
 ## 本机依赖
 
-0.6.7 播放无需安装 FFmpeg；Node.js 和下述汽水组件仍需准备。登录使用插件自带的内嵌窗口，Windows 需要 WebView2 Runtime，Mac 使用系统 WebKit，无需单独安装 Chrome／Edge。Windows x64 可自动从官方安装包提取汽水组件，无需安装或启动完整汽水客户端；仓库和插件 ZIP 不附带原生组件。安装后需在 MyGo 中授予此插件「运行程序」权限，辅助进程负责设备准备、签名请求和音频解密，扫码与验证由插件登录窗口完成。
+0.6.7 播放无需安装 FFmpeg；Node.js 和下述汽水组件仍需准备。登录使用插件自带的内嵌窗口，Windows 需要 WebView2 Runtime，Mac 使用系统 WebKit，无需单独安装 Chrome／Edge。Windows x64 和 Apple Silicon Mac 可自动从官方归档提取汽水组件，无需安装或启动完整汽水客户端；仓库和插件 ZIP 不附带汽水官方原生 SDK。安装后需在 MyGo 中授予此插件「运行程序」权限，辅助进程负责设备准备、签名请求和音频解密，扫码与验证由插件登录窗口完成。
 
 ### Node.js 路径设置
 
@@ -67,9 +69,13 @@ Windows 可在 PowerShell 中运行 `where.exe node` 查找当前安装位置，
 - **Node.js 24 或更新版本**：依次尝试 `/opt/homebrew/bin/node`、`/usr/local/bin/node` 和 `PATH` 中的 `node`。从 Finder／Dock 启动 MyGo 时通常没有交互式 shell 的 `PATH`，仅安装在 nvm 等私有目录的 Node.js 可能无法找到。
 - **音频解密**：由插件与 Node.js 内置模块完成，无需 FFmpeg。已有 Homebrew 时可运行 `brew install node`；0.6.6 及更早版本仍需另行安装 FFmpeg。
 - **内嵌登录**：使用系统 WebKit，由插件自带登录组件显示，无需外部浏览器。
-- **汽水音乐 3.7.0 官方客户端**：安装到 `/Applications/汽水音乐.app` 或 `~/Applications/汽水音乐.app`。从 `Contents/Resources/app.asar` 读取版本，并优先从 `app-<Node 架构>.asar.unpacked` 加载本机组件，兼容常规 `app.asar.unpacked` 目录。Apple Silicon 使用 ARM64 Node.js 和对应组件；`device.node`、`bdms.node` 及其依赖库应保留在官方安装位置。
+- **汽水组件自动准备**：首次登录或播放时，从汽水官方 CDN 下载固定的 **3.7.0 ARM64 精简归档**（约 18 MiB），校验整个归档的 SHA256，再用系统 `/usr/bin/tar` 只提取 `app.asar`、`device.node`、`bdms.node` 和 `libMetaSecML.dylib`。不安装或运行 `.app`，无需挂载 DMG；每个文件还会核对 SHA256 与 Mach-O 架构。
+- 提取后的组件存放在本插件数据目录的 `native-sdk-3.7.0-darwin-arm64`，约占 9.4 MiB；有效缓存可离线复用。首次归档、提取半成品和准备锁在完成或取消后清理。已有官方客户端也不会被修改，原账号与音乐缓存保留。
+- **旧版 0.6.7**：尚未包含 Mac 自动准备流程，仍需安装到 `/Applications/汽水音乐.app` 或 `~/Applications/汽水音乐.app` 的汽水音乐 3.7.0 组件。
 
-macOS 自动识别上述位置，不需要填写 Windows 路径。Node.js 安装在其他位置时可在插件设置中指定；其他依赖使用非标准位置时仍需调整 `local-env.cjs` 后再从本机安装。
+Mac 免安装流程需要 ARM64 Node.js 24 或更新版本；Node.js 安装在其他位置时，可在插件设置中填写路径，无需设置汽水客户端位置。Intel Mac 尚无已验证的自动准备安装包。
+
+精简归档来自 [汽水官方 3.7.0 ARM64 下载地址](https://lf-luna-release.qishui.com/obj/luna-release/3.7.0/452316191/SodaMusic-v3.7.0-official-darwin_arm64.tgz)，固定大小 `19001509` 字节，SHA256 为 `40c6bc80aa32cd1d5c76ad1b05bccc67e5ec22cf779b6dc3617ee5432b88ee04`；来源对应官网公开下载设置中的 `darwin.arm64.smallPackage`。
 
 ### Windows x64
 
@@ -84,7 +90,7 @@ Windows x64 支持免安装组件准备：
 
 下载固定指向 [汽水官方 3.7.0 x64 安装包](https://lf-luna-release.qishui.com/obj/luna-release/3.7.0/452316191/SodaMusic-v3.7.0-official-win32_x64.exe)，整体 SHA256 为 `e58578aec410e2c9c24835e92a1dc74d0fda982be1cf1003034538255baab0e4`，与 [Microsoft winget 3.7.0 清单](https://github.com/microsoft/winget-pkgs/blob/master/manifests/b/ByteDance/SodaMusic/3.7.0/ByteDance.SodaMusic.installer.yaml) 一致。仅提取与校验官方字节，不修改签名算法或上传账号到第三方服务。系统归档支持参考 [Microsoft tar 文档](https://learn.microsoft.com/en-us/windows/tar/)。
 
-两端均不需要启动官方汽水客户端，也不读取它的账号资料或现有登录凭据。辅助进程会访问汽水 API、官方安全 SDK/CDN 及音频 CDN；Windows 首次准备还会访问 `lf-luna-release.qishui.com`。
+两端均不需要启动官方汽水客户端，也不读取它的账号资料或现有登录凭据。辅助进程会访问汽水 API、官方安全 SDK/CDN 及音频 CDN；Windows 与 Mac 首次准备还会访问 `lf-luna-release.qishui.com`。
 
 ## 登录、存储与退出
 
@@ -98,13 +104,13 @@ Windows x64 支持免安装组件准备：
 
 ## 验证与常见问题
 
-Windows 0.6.7 已收到用户“实机测试暂未发现问题”的反馈，人工反馈与自动化检查分别记录。当前自动化记录包括 130 项插件回归、21 项加密样本校验和 8 组完整播放流程；详细范围及历史记录见 [docs/history.md](../docs/history.md)。
+Windows 0.6.7 已收到用户“实机测试暂未发现问题”的反馈，人工反馈与自动化检查分别记录。0.6.8 已通过 8 项 Mac 组件准备检查、8 组私有组件真实播放检查及 2 项 Windows 准备锁回归，官方客户端访问次数为 0。既有记录另包含 130 项插件回归、21 项加密样本校验和 8 组隔离播放流程；详细范围及历史记录见 [docs/history.md](../docs/history.md)。
 
-- **还需要 FFmpeg 吗？** 0.6.7 播放不需要；Node.js 和汽水签名／授权组件仍需准备。
+- **还需要 FFmpeg 吗？** 0.6.7 播放不需要；Node.js 仍需准备；新版可自动下载并校验汽水签名／授权组件。
 - **需要换 MyGo 主程序吗？** 登录与播放可直接使用原版 0.1.22；小图标布局、设置动作和 Windows 任务栏组件属于可选增强。
 - **手机已经确认，为什么还要验证？** 是否需要额外验证由汽水决定，请在插件登录窗口中完成官方验证；不要提前关闭窗口。
 - **歌曲显示不可播放怎么办？** 部分歌曲或视频作品可能未向当前账号提供完整音频；插件会明确提示，不把试听当作整首。
-- **更新后找不到变化？** 确认更新的是汽水插件、选择了正确平台包，并核对显示版本为 0.6.7。可选界面增强需在助手中确认安装。
+- **更新后找不到变化？** 确认更新的是汽水插件、选择了正确平台包，并核对显示版本为 0.6.8。可选界面增强需在助手中确认安装。
 
 在项目根目录运行 `npm test` 可执行模拟回归；其余验证脚本及源码入口见 [开发与验证](../README.md#开发与验证)。
 

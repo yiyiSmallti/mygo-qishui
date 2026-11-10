@@ -15,6 +15,7 @@ const require = createRequire(import.meta.url);
 const repo = fileURLToPath(new URL('../', import.meta.url)), pluginDir = path.join(repo, 'qishui-account');
 const output = path.resolve(process.argv[2]);
 const decoder = path.resolve(process.argv[3]);
+const sdkArchive = process.argv[4] ? path.resolve(process.argv[4]) : '';
 const profile = process.env.MYGO_QISHUI_DATA || path.join(process.platform === 'win32' ? process.env.APPDATA
   : path.join(os.homedir(), 'Library/Application Support'), 'MyGo Music/plugin-data/qishui-account');
 fs.mkdirSync(output, { recursive: true });
@@ -27,6 +28,8 @@ fs.writeFileSync(events, '');
 fs.writeFileSync(guard, `
 const fs=require('node:fs'),cp=require('node:child_process'),path=require('node:path');
 const record=event=>fs.appendFileSync(${JSON.stringify(events)},JSON.stringify({event,pid:process.pid})+'\\n');
+const officialApps=['/Applications/汽水音乐.app',path.join(require('node:os').homedir(),'Applications/汽水音乐.app')];
+for(const name of ['existsSync','statSync','lstatSync','readFileSync','readdirSync','accessSync']){const original=fs[name];fs[name]=function(file,...args){if(typeof file==='string'&&officialApps.some(root=>file===root||file.startsWith(root+'/'))){record('blocked-official-app-access');throw new Error('OFFICIAL_APP_ACCESS');}return original.call(this,file,...args);};}
 for(const method of ['spawn','spawnSync','execFile','execFileSync','exec','execSync']) {
  const original=cp[method];cp[method]=function(command,...args){
   if(command!==process.execPath){record('blocked-external-process');throw new Error('EXTERNAL_EXECUTABLE_BLOCKED');}
@@ -43,6 +46,7 @@ const report = () => fs.writeFileSync(path.join(output, 'live-media.json'), JSON
   ok: cases.length > 0 && cases.every(c => c.ok), platform: process.platform, node: process.version,
   ffmpegBlockedInPlayback: true, externalProcessAttempts: eventList().filter(e => e.event === 'blocked-external-process').length,
   originalStorageUnchanged: crypto.createHash('sha256').update(original).digest('hex') === digest(storageFile), cases,
+  officialAppAccessAttempts: eventList().filter(e => e.event === 'blocked-official-app-access').length,
 }, null, 2));
 function decode(file) {
   const child = spawnSync(decoder, [file], { encoding: 'utf8', timeout: 180000, maxBuffer: 1024 * 1024 });
@@ -71,6 +75,11 @@ const context = createContext({ URL, AbortController, TypeError, setTimeout, cle
 });
 
 try {
+  if (sdkArchive) {
+    assert.equal(process.platform, 'darwin');
+    await require(path.join(pluginDir, 'native-sdk-mac.cjs')).extractMacPackage({ packageFile: sdkArchive, dataDir: owner });
+  }
+  await require(path.join(pluginDir, 'native-sdk.cjs')).prepareSdk({ dataDir: owner });
   const module = new SourceTextModule(fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8'), { context });
   await module.link(() => { throw new Error('UNEXPECTED_IMPORT'); }); await module.evaluate();
   const api = module.namespace;
@@ -129,6 +138,7 @@ try {
   assert.ok(!fs.readdirSync(path.dirname(cachedFile)).some(n => /\.(part|receipt-part|lock)$/.test(n)));
   cases.push({ name: 'concurrent-helpers-and-stale-publication-lock', ok: true });
   assert.equal(eventList().filter(e => e.event === 'blocked-external-process').length, 0);
+  assert.equal(eventList().filter(e => e.event === 'blocked-official-app-access').length, 0);
   assert.equal(crypto.createHash('sha256').update(original).digest('hex'), digest(storageFile));
   report(); console.log('LIVE_MEDIA_RESULT:' + JSON.stringify({ ok: true, cases: cases.length }));
 } catch (error) {

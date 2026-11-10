@@ -19,7 +19,7 @@ function componentsAt(resources, names = ['app.asar.unpacked']) {
   if (!resources) return null;
   const asar = path.join(resources, 'app.asar');
   const unpacked = names.map(name => path.join(resources, name)).find(dir =>
-    ['device.node', 'bdms.node', ...(process.platform === 'win32' ? ['metasecml.dll'] : [])]
+    ['device.node', 'bdms.node', ...(process.platform === 'win32' ? ['metasecml.dll'] : process.platform === 'darwin' ? ['libMetaSecML.dylib'] : [])]
       .every(name => fs.existsSync(path.join(dir, name))));
   return unpacked && fs.existsSync(asar) ? { asar, unpacked } : null;
 }

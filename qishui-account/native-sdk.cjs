@@ -107,29 +107,29 @@ async function extractWindowsPackage({ packageFile, dataDir, signal, onProgress 
     if (moved && published) await fs.promises.rm(previous, { recursive: true, force: true });
   }
 }
-async function download(file, signal, onProgress) {
+async function download(file, signal, onProgress, packageInfo = PACKAGE) {
   const stalled = new AbortController();
   let idle;
   const resetIdle = () => { clearTimeout(idle); idle = setTimeout(() => stalled.abort(fail('下载汽水组件长时间未收到数据，请检查网络后重试。')), 45000); };
   resetIdle();
   const combined = AbortSignal.any([signal || new AbortController().signal, stalled.signal, AbortSignal.timeout(600000)]);
   try {
-    const response = await fetch(PACKAGE.url, { redirect: 'error', signal: combined });
+    const response = await fetch(packageInfo.url, { redirect: 'error', signal: combined });
     if (!response.ok || !response.body) { await response.body?.cancel(); throw fail('下载汽水官方组件失败（HTTP ' + response.status + '），请检查网络后重试。'); }
     const size = Number(response.headers.get('content-length'));
-    if (size && size !== PACKAGE.size) { await response.body.cancel(); throw fail('汽水官方安装包大小已变化，未加载组件，请更新插件。'); }
+    if (size && size !== packageInfo.size) { await response.body.cancel(); throw fail('汽水官方安装包大小已变化，未加载组件，请更新插件。'); }
     const output = fs.createWriteStream(file, { flags: 'wx', mode: 0o600 });
     let received = 0, percent = -10;
     async function* bounded() {
       for await (const bytes of response.body) {
         resetIdle();
         received += bytes.length;
-        if (received > PACKAGE.size) throw fail('汽水官方安装包大小异常，已停止下载。');
-        const current = Math.floor(received * 100 / PACKAGE.size / 10) * 10;
+        if (received > packageInfo.size) throw fail('汽水官方安装包大小异常，已停止下载。');
+        const current = Math.floor(received * 100 / packageInfo.size / 10) * 10;
         if (current > percent) { percent = current; onProgress('正在下载汽水官方组件（' + current + '%）…'); }
         yield bytes;
       }
-      if (received !== PACKAGE.size) throw fail('汽水官方组件下载不完整，请重试。');
+      if (received !== packageInfo.size) throw fail('汽水官方组件下载不完整，请重试。');
     }
     try { await pipeline(bounded(), output, { signal: combined }); }
     catch (error) { if (combined.reason?.name === 'TimeoutError') throw fail('下载汽水组件超时，请检查网络后重试。'); if (combined.reason?.code === 'setup') throw combined.reason; throw error; }
@@ -163,8 +163,15 @@ async function recoverLock(lock, observed) {
     removed = true;
   } catch (error) {
     if (!['EEXIST', 'ENOENT'].includes(error.code)) throw error;
-    if (error.code === 'EEXIST' && Date.now() - observed.stat.mtimeMs > 30000) {
-      throw fail('上次组件准备的恢复被中断。请退出 MyGo，删除插件数据目录中的 .native-sdk-lock，再重新登录。');
+    if (error.code === 'EEXIST') {
+      // An old parent lock can have a freshly acquired recovery guard. Only
+      // the guard's own age can distinguish interrupted recovery from a
+      // second caller currently repairing the same abandoned parent lock.
+      try {
+        const recovery = await fs.promises.stat(guard);
+        if (Date.now() - recovery.mtimeMs > 30000)
+          throw fail('上次组件准备的恢复被中断。请退出 MyGo，删除插件数据目录中的 .native-sdk-lock，再重新登录。');
+      } catch (changed) { if (changed.code !== 'ENOENT') throw changed; }
     }
   } finally {
     if (guarded && !removed) {
@@ -203,8 +210,9 @@ async function acquireLock(owner, signal) {
   }
 }
 async function prepareSdk({ dataDir, signal, onProgress = () => {} } = {}) {
+  if (process.platform === 'darwin' && process.arch === 'arm64') return require('./native-sdk-mac.cjs').prepareMacSdk({ dataDir, signal, onProgress });
   if (sodaComponents()) return;
-  if (process.platform !== 'win32') throw fail('未找到本机汽水组件。macOS 目前需安装汽水音乐官方客户端。');
+  if (process.platform !== 'win32') throw fail('当前免安装组件支持 Windows x64 和 Apple Silicon Mac。请使用对应架构的 Node.js。');
   if (process.arch !== 'x64') throw fail('免安装组件目前支持 Windows x64。请改用 x64 Node.js 24 或更新版本。');
   return prepareWindowsSdk({ dataDir, signal, onProgress });
 }
@@ -241,4 +249,5 @@ async function provisionWindowsSdk({ dataDir, signal, onProgress = () => {} } = 
     await release();
   }
 }
-module.exports = { prepareSdk, prepareWindowsSdk, extractWindowsPackage, cachedWindowsSdk };
+module.exports = { prepareSdk, prepareWindowsSdk, extractWindowsPackage, cachedWindowsSdk,
+  sdkInternals: { ownedDir, digest, acquireLock, downloadPinned: download, fail, cancelled } };
