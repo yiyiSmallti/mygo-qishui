@@ -59,6 +59,13 @@
         url.searchParams.set('aid', '386088');
         url.searchParams.set('verify_reason', decision.event_params?.verify_reason || '');
         url.searchParams.set('verify_scene', decision.event_params?.verify_scene || '');
+        // The official UMD externalizes React and uses its legacy DOM APIs.
+        // Both runtimes are pinned local plugin assets, injected by the helper.
+        const react = window.React, reactDOM = window.ReactDOM;
+        if (typeof react?.createElement !== 'function' || typeof reactDOM?.render !== 'function' ||
+            typeof reactDOM?.unmountComponentAtNode !== 'function') throw new Error('loadFailed');
+        window.ucSecondVerifyReact = react;
+        window.ucSecondVerifyReactDom = reactDOM;
         window.$$account_verify_portrait_id = portrait;
         await loadScript(url.href);
         if (settled) return;

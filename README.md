@@ -1,6 +1,6 @@
 # MyGo × 汽水音乐
 
-适配 Windows 与 macOS 的 MyGo 汽水音乐插件，以及 Windows 任务栏播放条和听歌页面布局补丁。当前插件 **0.6.2**，支持原版 MyGo Music v0.1.22，播放器补丁支持 **MyGo Music v0.1.22**，同时保留 v0.1.21 对应补丁。
+适配 Windows 与 macOS 的 MyGo 汽水音乐插件，以及 Windows 任务栏播放条和听歌页面布局补丁。当前插件 **0.6.3**，支持原版 MyGo Music v0.1.22，播放器补丁支持 **MyGo Music v0.1.22**，同时保留 v0.1.21 对应补丁。
 
 这是独立开发的适配项目，不是 MyGo 或汽水音乐的官方发行版。
 
@@ -8,8 +8,8 @@
 
 | 平台 | 当前验证范围 | 安装方式 |
 | --- | --- | --- |
-| Windows x64 | 既有功能已有实机记录；新内嵌登录版已交叉编译，待 Windows 实机确认 | 原版 MyGo + 0.6.2 插件 |
-| macOS · Apple Silicon | 已有会话读取与播放；新内嵌窗口已真实取码、显示二维码，人工扫码待确认 | 原版 MyGo + 0.6.2 插件 |
+| Windows x64 | 既有功能已有实机记录；新内嵌登录版已交叉编译，待 Windows 实机确认 | 原版 MyGo + 0.6.3 插件 |
+| macOS · Apple Silicon | 已有会话读取与播放；新内嵌窗口已真实取码、显示二维码，人工扫码待确认 | 原版 MyGo + 0.6.3 插件 |
 | macOS · Intel | 已有架构目录查找逻辑，尚未实机验证 | 暂无已验证的安装说明 |
 
 透明任务栏播放条、拖动吸附和任务栏逐字歌词仅适用于 Windows。插件自带窗口完成扫码与官方验证，不启动 Edge／Chrome。真实账号的二次验证仍需人工确认；Linux 暂不支持。Node.js 和 FFmpeg 需自行安装，Windows 内嵌窗口需要 WebView2 Runtime；Windows x64 新增从官方安装包自动提取汽水组件的免安装流程，尚待 Windows 实机验证。详见 [本机依赖](qishui-account/README.md#本机依赖)。
@@ -56,7 +56,7 @@
 
 | 模块 | 功能 |
 | --- | --- |
-| 账号登录 | 0.6.2 在插件自带窗口扫码并完成官方二次验证；成功后再校验账号身份并保存登录。显示头像与昵称，支持退出登录，失败或关窗保留原账号。 |
+| 账号登录 | 0.6.3 在插件自带窗口扫码并完成官方二次验证；成功后再校验账号身份并保存登录。显示头像与昵称，支持退出登录，失败或关窗保留原账号。 |
 | 音乐库 | 读取自建歌单、收藏歌单、喜欢的音乐、抖音收藏和收藏专辑；提供详情页与手动刷新。 |
 | 搜索与详情 | 搜索歌曲、专辑、艺人和歌单；支持分页，以及歌单曲目、专辑曲目和艺人作品。 |
 | 音频播放 | 播放当前账号获完整授权的歌曲和上传原声；转换为 MyGo 可播放的音频并检查完整时长，本地缓存按账号隔离。 |
@@ -89,12 +89,14 @@
 
 ## 安装与使用
 
+0.6.3 修复现代二次验证界面空白：插件内置 React / ReactDOM 18.3.1，并在加载官方验证组件前注入所需全局变量，无需额外连接 React CDN。
+
 0.6.2 修复 Windows 登录窗口因 API 根目录返回 HTTP 404 而报 `load`：Windows 组件在临时 WebView 内提供本地同源宿主页，官方 SDK 与接口请求继续通过正常 HTTPS 连接，不忽略实际的导航失败。
 
-**0.6.2 可直接使用原版 MyGo Music v0.1.22，无需替换播放器。** 登录窗口由插件自带的本机组件显示，扫码与官方二次验证在同一临时会话完成，不启动独立 Edge／Chrome。任务栏和页面布局补丁仅为可选界面扩展。
+**0.6.3 可直接使用原版 MyGo Music v0.1.22，无需替换播放器。** 登录窗口由插件自带的本机组件显示，扫码与官方二次验证在同一临时会话完成，不启动独立 Edge／Chrome。任务栏和页面布局补丁仅为可选界面扩展。
 
-1. GitHub 来源的汽水插件，在插件菜单检查更新到 0.6.2；首次在 MyGo「设置 → 插件 → ＋ → 从 GitHub 安装」输入 `yiyiSmallti/mygo-qishui`。
-2. 本机来源插件，从 [v0.6.2 发布页](https://github.com/yiyiSmallti/mygo-qishui/releases/tag/v0.6.2) 下载 `plugin-windows-amd64.zip` 或 `plugin-darwin-arm64.zip`，通过从本机安装升级，勿删除 `plugin-data`。
+1. GitHub 来源的汽水插件，在插件菜单检查更新到 0.6.3；首次在 MyGo「设置 → 插件 → ＋ → 从 GitHub 安装」输入 `yiyiSmallti/mygo-qishui`。
+2. 本机来源插件，从 [v0.6.3 发布页](https://github.com/yiyiSmallti/mygo-qishui/releases/tag/v0.6.3) 下载 `plugin-windows-amd64.zip` 或 `plugin-darwin-arm64.zip`，通过从本机安装升级，勿删除 `plugin-data`。
 3. 启用插件并允许运行辅助程序，在账号菜单登录。用手机汽水 App 扫码并确认，需要安全验证时在插件登录窗口继续；成功后窗口自动关闭。提前关闭会取消本次登录，原账号保留。
 
 两个平台包包含各自的登录组件，不能混用，也不能将仓库源码 ZIP 当作已构建插件安装。已有登录无需重新扫码。Windows x64 仍支持自动提取官方汽水组件；Mac 仍需要汽水音乐 3.7.0 的原生组件。两端需要 Node.js 24+ 和 FFmpeg；Windows 还需要 WebView2 Runtime，Mac 使用系统 WebKit，不必安装独立 Chrome／Edge。见 [本机依赖](qishui-account/README.md#本机依赖)。
@@ -105,7 +107,7 @@
 
 ### 发布与插件目录
 
-MyGo 插件更新只读取 GitHub 最新正式 Release，跳过 Pre-release。正式发布需设为 Latest 并提供 `plugin-windows-amd64.zip` 与 `plugin-darwin-arm64.zip`。0.6.2 只发布平台插件包及源码，登录不再要求配套播放器。
+MyGo 插件更新只读取 GitHub 最新正式 Release，跳过 Pre-release。正式发布需设为 Latest 并提供 `plugin-windows-amd64.zip` 与 `plugin-darwin-arm64.zip`。0.6.3 只发布平台插件包及源码，登录不再要求配套播放器。
 
 [MyGo 官方发布说明](https://github.com/egoist/mygo-music#publishing-a-plugin) 使用 GitHub Topic `mygo-music-plugin` 发现公开仓库；[官网插件页](https://cloudmusic.egoist.dev/plugins/) 的结果取决于 GitHub 搜索索引和页面缓存，并不代表官方认证。
 
@@ -118,7 +120,7 @@ MyGo 插件更新只读取 GitHub 最新正式 Release，跳过 Pre-release。�
 - 播放受当前账号获得的服务端授权限制；平台未提供完整音频时不能播放，视频作品暂不支持。AAC 转换成 FLAC 是兼容处理，不会提升源音质。
 - 歌单与专辑收藏目前只读；歌曲喜欢支持写入，但之前的写入验证使用模拟测试，未为测试修改真实账号。
 - 场景、电台和推荐数量由接口动态返回，不保证固定数量。
-- 官方自动更新保持可用；0.6.2 的登录组件随插件更新，官方播放器更新无需另装登录补丁；任务栏和布局等可选本地改动仍可能被官方更新覆盖。回退时换回原程序与 0.5.2 插件，保留账号数据。
+- 官方自动更新保持可用；0.6.3 的登录组件随插件更新，官方播放器更新无需另装登录补丁；任务栏和布局等可选本地改动仍可能被官方更新覆盖。回退时换回原程序与 0.5.2 插件，保留账号数据。
 
 ## 目录
 

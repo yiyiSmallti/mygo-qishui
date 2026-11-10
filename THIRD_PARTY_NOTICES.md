@@ -17,3 +17,7 @@
 ## 登录组件依赖
 
 登录组件使用 MyGo 框架（MIT）、purego（Apache-2.0）、rsc.io/qr 及 Go x/net、x/text（BSD）。许可原文随插件存放在 `native-licenses/`，不包含汽水官方原生 SDK。
+
+## React / ReactDOM
+
+`qishui-account/vendor/react-18.3.1/` 包含官方 npm `react@18.3.1` 和 `react-dom@18.3.1` 的未修改 production UMD 文件，以满足官方二次验证组件的外部依赖及 legacy DOM API。两者采用 MIT 许可，原文、来源和文件 SHA-256 均保留在该目录中。

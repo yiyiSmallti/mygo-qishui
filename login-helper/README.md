@@ -19,6 +19,8 @@ go -C login-helper run ./cmd/package -root .. -native ../dist/login-helper -out 
 
 0.6.2 在 Windows 不再把 API 根目录的 404 响应作为宿主页。Windows 不发起初始远端导航，直接用 `Page.LoadHTML(bootstrapHTML, origin + "/")` 加载本地 HTML；WebView2 通过精确文档响应提供 HTTP 200 并保留 API 来源。真实 SDK 和接口仍走 HTTPS，原有加载失败处理不变；Mac 保留已验证的 WebKit 导航方式。
 
+官方现代二次验证组件依赖宿主提供 React / ReactDOM。0.6.3 随包内置固定版本 18.3.1 production UMD，并在加载官方组件前设置 `ucSecondVerifyReact` / `ucSecondVerifyReactDom`，保留组件需要的 `render` 和 `unmountComponentAtNode`；不增加 React CDN 请求。文件、原始 MIT 许可与校验值位于 `qishui-account/vendor/react-18.3.1/`。
+
 页面使用临时会话且没有受信任的 Go 服务桥。宿主只读取有界状态，并在每次 Eval 内检查来源。二维码由组件编码，验证弹窗保持同一会话；最终 Cookie 只通过私有管道交给插件，再向固定汽水 API 校验身份，成功才保存会话。
 
 页面可写的错误文本不会进入诊断，只返回固定错误码与文案。stdin 关闭和独立时限均能结束组件；父插件还提供有界进程终止。原版单次登录总时限为 5 分钟，设备准备和窗口共享此预算，不依赖延长宿主时限。
@@ -29,6 +31,6 @@ go -C login-helper run ./cmd/package -root .. -native ../dist/login-helper -out 
 
 复现原版入口验证：检出未改动的 `egoist/mygo-music` v0.1.22，将 `verification/stock-player-main.go.txt` 复制到其 `cmd/stockqa/main.go`，构建 `go build -o /private/tmp/mygo-stock-login-qa ./cmd/stockqa`。在本目录构建 `CGO_ENABLED=0 go build -tags loginqa -o <plugin>/native/qishui-login .`，使用隔离副本而非已安装插件。
 
-向验证程序设置 `MYGO_QA_PLUGIN_DIR`、`MYGO_QA_STORAGE`（只读取现有匿名设备记录）、`MYGO_NATIVE_QA_MODE`、`MYGO_NATIVE_QA_RESULT`、`MYGO_NATIVE_QA_SCREENSHOT` 和 `MYGO_STOCK_QA_RESULT`。模式为 `mfa-success`、`mfa-cancel`、`qr-origin`、`qr-token`、`unsafe-error`、`bootstrap`、`navigation-failure`。`bootstrap` 断言本地宿主页标记与页面 URL/来源一致；`navigation-failure` 在真实取码后导航到不存在的域名，必须返回 `load`。验证会创建临时插件数据，检查旧会话保留与原账号文件不变，不扫描或确认真实账号；截图会先隐藏二维码。
+向验证程序设置 `MYGO_QA_PLUGIN_DIR`、`MYGO_QA_STORAGE`（只读取现有匿名设备记录）、`MYGO_NATIVE_QA_MODE`、`MYGO_NATIVE_QA_RESULT`、`MYGO_NATIVE_QA_SCREENSHOT` 和 `MYGO_STOCK_QA_RESULT`。`mfa-success` / `mfa-cancel` 使用真实随包 React 渲染、点击与卸载受控验证组件，检查依赖在官方脚本入口前可用；该受控组件不替代真实账号的官方验证。模式为 `mfa-success`、`mfa-cancel`、`qr-origin`、`qr-token`、`unsafe-error`、`bootstrap`、`navigation-failure`。`bootstrap` 断言本地宿主页标记与页面 URL/来源一致；`navigation-failure` 在真实取码后导航到不存在的域名，必须返回 `load`。验证会创建临时插件数据，检查旧会话保留与原账号文件不变，不扫描或确认真实账号；截图会先隐藏二维码。
 
 Mac 已通过上述原版入口取码和窗口验证，Windows 本轮只完成交叉编译，真实账号确认及平台二次验证仍需在目标电脑完成。

@@ -158,7 +158,7 @@ func scripts(req startRequest) (string, error) {
 	data, _ := json.Marshal(map[string]any{"device": map[string]any{"schema": req.Device.Schema, "aid": req.Device.Aid, "did": req.Device.Did, "iid": req.Device.Iid, "clientVersion": req.Device.ClientVersion}, "computerName": req.ComputerName, "osLabel": req.OsLabel})
 	var result strings.Builder
 	result.WriteString("if(location.origin==='" + origin + "'){window.__mygoSignInData=" + string(data) + ";\n")
-	for _, name := range []string{"browser-info.js", "browser-verification.js", "embedded-login.js"} {
+	for _, name := range []string{"vendor/react-18.3.1/react.production.min.js", "vendor/react-18.3.1/react-dom.production.min.js", "browser-info.js", "browser-verification.js", "embedded-login.js"} {
 		f, e := root.Open(name)
 		if e != nil {
 			return "", problem("setup", "插件缺少登录脚本，请重新安装对应平台插件。")

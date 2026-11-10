@@ -21,7 +21,9 @@ func init() {
 	beforePage = func(script string) string {
 		modeJSON, _ := json.Marshal(mode)
 		observe := `(()=>{const mode=MODE;const original=window.fetch;let firstPoll=true,token,trace,portrait;window.__qaMfa={rendered:false,callback:false,resend:false,sameToken:false,sameTrace:false};
-const append=Node.prototype.appendChild;Node.prototype.appendChild=function(node){if(node.tagName==='SCRIPT'&&node.src.startsWith('https://auth.zijieapi.com/qa-embedded-verification.js')){window.ucWebSecondVerify=options=>{window.__qaMfa.rendered=true;const b=document.createElement('button');b.id='qa-verify-button';b.textContent='Embedded verification QA (not a real account check)';b.onclick=()=>{window.__qaMfa.callback=true;b.remove();options.verifyFinishCallback({status:mode!=='mfa-cancel'})};document.body.appendChild(b)};queueMicrotask(()=>node.onload?.());return node}return append.call(this,node)};
+const append=Node.prototype.appendChild;Node.prototype.appendChild=function(node){if(node.tagName==='SCRIPT'&&node.src.startsWith('https://auth.zijieapi.com/qa-embedded-verification.js')){const React=window.ucSecondVerifyReact,ReactDOM=window.ucSecondVerifyReactDom;
+window.__qaMfa.reactReady=React?.version==='18.3.1'&&ReactDOM?.version?.startsWith('18.3.1')&&typeof ReactDOM.render==='function'&&typeof ReactDOM.unmountComponentAtNode==='function';
+if(window.__qaMfa.reactReady){window.ucWebSecondVerify=options=>{const root=document.createElement('div');document.body.appendChild(root);function Verification(){const [label]=React.useState('Embedded verification QA (not a real account check)');return React.createElement('button',{id:'qa-verify-button',onClick:()=>{window.__qaMfa.callback=true;window.__qaMfa.unmounted=ReactDOM.unmountComponentAtNode(root);root.remove();options.verifyFinishCallback({status:mode!=='mfa-cancel'})}},label)}ReactDOM.render(React.createElement(Verification),root);window.__qaMfa.rendered=!!document.querySelector('#qa-verify-button')}};queueMicrotask(()=>node.onload?.());return node}return append.call(this,node)};
 window.fetch=async function(...args){const u=new URL(args[0],location.origin);const r=await original.apply(this,args);if(u.origin!=='https://api.qishui.com')return r;
 if(u.pathname==='/passport/web/get_qrcode/'&&['qr-origin','qr-token'].includes(mode)){const x=await r.clone().json();if(x.data){const q=new URL(x.data.qrcode_index_url);if(mode==='qr-origin')q.hostname='example.invalid';else q.searchParams.set('token','qa-mismatched-token');x.data.qrcode_index_url=q.href}return new Response(JSON.stringify(x),{status:200,headers:{'Content-Type':'application/json'}})}
 if(u.pathname==='/passport/web/check_qrconnect/'&&mode.startsWith('mfa-')){const h=new Headers(args[1]?.headers);const t=new URLSearchParams(args[1]?.body).get('token');if(firstPoll){firstPoll=false;token=t;trace=h.get('x-tt-passport-trace-id');portrait=h.get('x-tt-passport-verify-portrait');return new Response(JSON.stringify({message:'error',data:{error_code:2046,url:'https://auth.zijieapi.com/qa-embedded-verification.js'}}),{status:200,headers:{'Content-Type':'application/json'}})}if(u.searchParams.get('isResend')==='true'){Object.assign(window.__qaMfa,{resend:true,sameToken:t===token,sameTrace:h.get('x-tt-passport-trace-id')===trace&&h.get('x-tt-passport-verify-portrait')===portrait})}}
@@ -45,6 +47,14 @@ return r}})();`
 			if json.Unmarshal([]byte(text), &state) != nil {
 				continue
 			}
+			if strings.HasPrefix(mode, "mfa-") && state.Status == "error" {
+				value, _ := win.Page().Eval("JSON.stringify(window.__qaMfa)")
+				var mfa map[string]bool
+				encoded, _ := value.(string)
+				json.Unmarshal([]byte(encoded), &mfa)
+				save("mfa", mfa)
+				return
+			}
 			if mode == "mfa-cancel" {
 				continue
 			}
@@ -64,7 +74,7 @@ return r}})();`
 				encoded, _ := value.(string)
 				var mfa map[string]bool
 				json.Unmarshal([]byte(encoded), &mfa)
-				if !mfa["resend"] || !mfa["sameToken"] || !mfa["sameTrace"] || !mfa["callback"] {
+				if !mfa["reactReady"] || !mfa["rendered"] || !mfa["unmounted"] || !mfa["resend"] || !mfa["sameToken"] || !mfa["sameTrace"] || !mfa["callback"] {
 					continue
 				}
 				save("mfa", mfa)
