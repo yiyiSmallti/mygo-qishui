@@ -34,7 +34,7 @@ function flac(durationMs = 10000) {
 }
 
 function loadWorker(root, options = {}) {
-  const fsMock = { ...fs, existsSync: value => String(value).endsWith('.exe') || fs.existsSync(value),
+  const fsMock = { ...fs,
     promises: { ...fs.promises, ...options.promises } };
   const prefix = workerSource.slice(0, workerSource.indexOf('\nconst input = readline.createInterface({ input: process.stdin });'));
   assert.ok(prefix.length > 1000);
@@ -48,27 +48,13 @@ function loadWorker(root, options = {}) {
       if (name === 'node:child_process') return { spawn: options.spawn || (() => { throw new Error('Unexpected process'); }) };
       if (name === './media-request.cjs') return { getTrackMetadata() {}, getSearchMetadata() {} };
       if (name === './local-env.cjs') return require('../qishui-account/local-env.cjs');
+      if (name === './mp4-cenc.cjs') return require('../qishui-account/mp4-cenc.cjs');
       if (name.endsWith('device.node')) throw new Error('Native decoder must not run in unit tests');
       return require(name);
     },
   });
-  new vm.Script(prefix + '\nglobalThis.testApi = { download, convert, prepareStream, validCachedFlac, stopEncoder };').runInContext(context);
+  new vm.Script(prefix + '\nglobalThis.testApi = { download, prepareStream, validCachedFlac };').runInContext(context);
   return context.testApi;
-}
-
-function encoder(output, events = []) {
-  const child = new EventEmitter(); child.stdout = new PassThrough();
-  child.kill = () => { events.push('kill'); setImmediate(() => { child.stdout.end(); events.push('close'); child.emit('close', 1); }); };
-  if (output) {
-    fs.writeFileSync(output, flac());
-    setImmediate(() => {
-      // Deliberately deliver exit before the final stdout progress event.
-      child.emit('exit', 0);
-      child.stdout.end('out_time_us=10000000\n');
-      setImmediate(() => { events.push('close'); child.emit('close', 0); });
-    });
-  }
-  return child;
 }
 
 test('download handles partial FileHandle writes without truncating audio', async t => {
@@ -86,15 +72,6 @@ test('download handles partial FileHandle writes without truncating audio', asyn
   assert.equal(closed, true);
 });
 
-test('conversion waits for close so final progress is included', async t => {
-  const root = fixture(t), output = path.join(root, 'result.flac');
-  const api = loadWorker(root, { spawn(command, args) {
-    assert.equal(args[args.indexOf('-protocol_whitelist') + 1], 'file,pipe');
-    return encoder(output);
-  } });
-  await api.convert(path.join(root, 'input.audio'), output, '', 10000);
-});
-
 test('cached FLAC must have a valid header and the current authorized duration', async t => {
   const root = fixture(t), file = path.join(root, 'cache.flac'), api = loadWorker(root);
   fs.writeFileSync(file, Buffer.alloc(256)); assert.equal(await api.validCachedFlac(file, 10000), false);
@@ -103,33 +80,19 @@ test('cached FLAC must have a valid header and the current authorized duration',
   fs.writeFileSync(file, flac().subarray(0, 20)); assert.equal(await api.validCachedFlac(file, 10000), false);
 });
 
-test('a bad existing cache is regenerated only after a full authorized response', async t => {
+test('a legacy FLAC cache is reused only after fresh full authorization', async t => {
   const root = fixture(t), cache = path.join(root, 'MyGo Music', 'plugin-data', 'qishui-account', 'media-cache');
   fs.mkdirSync(cache, { recursive: true });
   const name = crypto.createHash('sha256').update('test-account:123:higher:10000').digest('hex') + '.flac';
-  fs.writeFileSync(path.join(cache, name), Buffer.alloc(256));
-  let conversions = 0;
-  const api = loadWorker(root, {
-    fetch: async () => ({ ok: true, headers: { get: () => '200' }, body: (async function* () { yield Buffer.alloc(200); })() }),
-    spawn(command, args) { conversions++; return encoder(args.at(-1)); },
-  });
+  fs.writeFileSync(path.join(cache, name), flac());
+  const api = loadWorker(root);
   const data = { risk_result: 0, track: { duration: 10000 }, track_player: { video_model_type: 1,
-    video_model: JSON.stringify({ video_duration: 10, video_list: [{ main_url: 'https://v1-luna.douyinvod.com/test', video_meta: { quality: 'higher' } }] }) } };
+    video_model: JSON.stringify({ video_duration: 10, video_list: [{ main_url: 'https://v1-luna.douyinvod.com/test', video_meta: { quality: 'higher', codec_type: 'aac', vtype: 'm4a' } }] }) } };
   const result = await api.prepareStream({ accountId: 'test-account', trackId: '123', cacheDir: cache }, data);
-  assert.equal(result.type, 'flac'); assert.equal(conversions, 1);
+  assert.equal(result.type, 'flac');
   assert.equal(await api.validCachedFlac(path.join(cache, name), 10000), true);
   data.track_player.video_model_type = 2;
   await assert.rejects(api.prepareStream({ accountId: 'test-account', trackId: '123', cacheDir: cache }, data), /完整音频/);
-  assert.equal(conversions, 1, 'a cached file must not turn a preview authorization into full playback');
-});
-
-test('encoder cleanup waits for its close event before returning', async t => {
-  const root = fixture(t), events = [], output = path.join(root, 'out');
-  const api = loadWorker(root, { spawn: () => encoder(null, events) });
-  const conversion = api.convert('input', output, '', 10000);
-  const rejected = assert.rejects(conversion, /音频转换未完成/);
-  await api.stopEncoder(); await rejected;
-  assert.deepEqual(events, ['kill', 'close']);
 });
 
 test('published UGC clip model 3 requires matching media type and complete clip duration', async t => {
@@ -140,7 +103,7 @@ test('published UGC clip model 3 requires matching media type and complete clip 
   const api = loadWorker(root);
   const message = { accountId: 'test-account', trackId: '123', mediaType: 'ugc_clip', cacheDir: cache };
   const data = { risk_result: 0, track: { duration: 10000, media_type: 'ugc_clip' }, track_player: { video_model_type: 3,
-    video_model: JSON.stringify({ video_duration: 10, video_list: [{ main_url: 'https://v1-luna.douyinvod.com/test', video_meta: { quality: 'higher' } }] }) } };
+    video_model: JSON.stringify({ video_duration: 10, video_list: [{ main_url: 'https://v1-luna.douyinvod.com/test', video_meta: { quality: 'higher', codec_type: 'aac', vtype: 'm4a' } }] }) } };
   const result = await api.prepareStream(message, data);
   assert.equal(result.type, 'flac');
   assert.ok(result.url.endsWith(name));

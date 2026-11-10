@@ -1,0 +1,58 @@
+package main
+
+import (
+ "crypto/sha256"
+ "encoding/binary"
+ "encoding/hex"
+ "encoding/json"
+ "fmt"
+ "io"
+ "math"
+ "os"
+ "github.com/egoist/mygo/audio"
+ _ "github.com/egoist/mygo/audio/aac"
+ _ "github.com/egoist/mygo/audio/flac"
+ "github.com/egoist/mygo/audio/mp4"
+ "mygo-music/internal/plugin"
+)
+
+func hash(samples []float32) string {
+ b:=make([]byte,len(samples)*4)
+ for i,v:=range samples { binary.LittleEndian.PutUint32(b[i*4:],math.Float32bits(v)) }
+ h:=sha256.Sum256(b);return hex.EncodeToString(h[:])
+}
+func read(d audio.Decoder,b []float32) error {
+ for off:=0;off<len(b); {n,e:=d.Read(b[off:]);off+=n;if e!=nil&&off<len(b){return e};if n==0{return io.ErrNoProgress}}
+ return nil
+}
+func run() (map[string]any,error) {
+ if len(os.Args)<2{return nil,fmt.Errorf("argument")}
+ if os.Args[1]=="--compile" {
+  temp,e:=os.MkdirTemp("","qishui-compile-");if e!=nil{return nil,e};defer os.RemoveAll(temp)
+  p,e:=plugin.Load(os.Args[2],temp);if e!=nil{return nil,e};defer p.Close()
+  return map[string]any{"ok":true,"originalMyGoPluginCompile":true},nil
+ }
+ f,e:=os.Open(os.Args[1]);if e!=nil{return nil,e};defer f.Close()
+ d,e:=mp4.NewDecoder(f);if e!=nil{return nil,e}
+ total:=d.Len();if total<=0{return nil,fmt.Errorf("duration")}
+ positions:=[]int64{total/4+137,total/2+53,total*9/10+7}
+ windows:=make([][]float32,len(positions));for i:=range windows{windows[i]=make([]float32,2048*2)}
+ buf:=make([]float32,8192);var frames int64;peak:=float32(0);fullHash:=sha256.New()
+ for {n,e:=d.Read(buf);raw:=make([]byte,n*4);for i,v:=range buf[:n]{binary.LittleEndian.PutUint32(raw[i*4:],math.Float32bits(v))};fullHash.Write(raw);if n%2!=0{return nil,fmt.Errorf("channels")}
+  for _,v:=range buf[:n]{if math.IsNaN(float64(v))||math.IsInf(float64(v),0){return nil,fmt.Errorf("nonfinite")};if v>peak{peak=v}}
+  for i,p:=range positions {lo:=max(frames,p);hi:=min(frames+int64(n/2),p+2048);if hi>lo {copy(windows[i][(lo-p)*2:(hi-p)*2],buf[(lo-frames)*2:(hi-frames)*2])}}
+  frames+=int64(n/2);if e==io.EOF{break};if e!=nil{return nil,e};if n==0{return nil,io.ErrNoProgress}
+ }
+ if frames!=total{return nil,fmt.Errorf("incomplete frames")}
+ seeks:=[]map[string]any{}
+ for i,p:=range positions {
+  if e:=d.SetPosition(p);e!=nil{return nil,e};actual:=make([]float32,len(windows[i]));if e:=read(d,actual);e!=nil{return nil,e}
+  same:=hash(actual)==hash(windows[i]);maxError:=0.0
+  for j,v:=range actual {maxError=max(maxError,math.Abs(float64(v-windows[i][j])))}
+  seeks=append(seeks,map[string]any{"frame":p,"hashMatched":same,"maxError":maxError})
+  // The original AAC decoder also differs by one PCM16 LSB after seek on an unencrypted calibration tone.
+  if maxError>1.0/32768.0{return map[string]any{"ok":false,"seeks":seeks},fmt.Errorf("seek mismatch")}
+ }
+ return map[string]any{"ok":true,"frames":frames,"sampleRate":d.SampleRate(),"durationMs":float64(frames)*1000/float64(d.SampleRate()),"peak":peak,"decodedPcmSha256":hex.EncodeToString(fullHash.Sum(nil)),"seekTolerancePcm16Lsb":1,"seeks":seeks},nil
+}
+func main(){r,e:=run();if e!=nil {if r==nil{r=map[string]any{}};r["ok"]=false;r["error"]=e.Error()};json.NewEncoder(os.Stdout).Encode(r);if e!=nil{os.Exit(1)}}

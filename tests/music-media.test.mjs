@@ -15,7 +15,7 @@ const session = () => ({
   account: { id: '7631943856258566100', name: '测试账号' },
   device: { schema: 1, aid: 386088, did: '71234567890123456', iid: '71234567890123457' },
 });
-const streamValue = (overrides = {}) => ({ url: CACHE + HASH + '.flac', type: 'flac', quality: 'standard', bitRate: 256000, size: 1024, ...overrides });
+const streamValue = (overrides = {}) => ({ url: CACHE + HASH + '.m4a', type: 'm4a', quality: 'standard', bitRate: 256000, size: 1024, ...overrides });
 const ok = value => ({ ok: true, value });
 function deferred() {
   let resolve;
@@ -66,7 +66,7 @@ async function harness(replies = [], options = {}) {
   return { api: module.namespace, stored, spawned, helpers, inputs, timers };
 }
 
-test('stream returns only a validated local FLAC cache and passes credentials over private stdin', async () => {
+test('stream returns a validated local M4A cache and passes credentials over private stdin', async () => {
   const value = streamValue();
   const h = await harness([ok(value)]);
   assert.deepEqual(clone(await h.api.stream({ id: TRACK, quality: 'high' })), value);
@@ -84,6 +84,12 @@ test('stream returns only a validated local FLAC cache and passes credentials ov
   assert.equal(h.timers.size, 0);
 });
 
+test('stream retains compatibility with a validated legacy FLAC cache', async () => {
+  const value = streamValue({ url: CACHE + HASH + '.flac', type: 'flac' });
+  const h = await harness([ok(value)]);
+  assert.deepEqual(clone(await h.api.stream({ id: TRACK })), value);
+});
+
 test('UGC clips retain the media type for playback and lyrics, while videos report unsupported', async () => {
   const h = await harness([ok(streamValue()), ok({ content: '' })]);
   await h.api.stream({ id: 'ugc_clip:' + TRACK });
@@ -96,7 +102,7 @@ test('UGC clips retain the media type for playback and lyrics, while videos repo
   assert.equal(h.spawned.length, 2);
 });
 
-test('stream rejects HTTP, network shares, non-FLAC and paths outside its local media cache', async t => {
+test('stream rejects HTTP, network shares, mismatched formats and paths outside its local media cache', async t => {
   const invalid = [
     ['HTTP media response', streamValue({ url: 'https://api.qishui.com/audio.flac' })],
     ['plain HTTP', streamValue({ url: 'http://example.invalid/audio.flac' })],
@@ -109,6 +115,8 @@ test('stream rejects HTTP, network shares, non-FLAC and paths outside its local 
     ['encoded traversal', streamValue({ url: CACHE + '%2e%2e/' + HASH + '.flac' })],
     ['different file format', streamValue({ url: CACHE + HASH + '.mp3' })],
     ['false format declaration', streamValue({ type: 'mp3' })],
+    ['M4A declared as FLAC', streamValue({ type: 'flac' })],
+    ['FLAC declared as M4A', streamValue({ url: CACHE + HASH + '.flac' })],
   ];
   for (const [name, value] of invalid) await t.test(name, async () => {
     const h = await harness([ok(value)]);

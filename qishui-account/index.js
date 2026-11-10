@@ -4,7 +4,7 @@ const ORIGIN = 'https://api.qishui.com';
 const SESSION = 'qishui-session-v1';
 const DIAGNOSTIC = 'qishui-login-diagnostic-v1';
 const DEVICE = 'qishui-device-v1';
-const VERSION = '0.6.6';
+const VERSION = '0.6.7';
 const UA = {
   windows: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   darwin: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -414,8 +414,8 @@ export async function stream({ id, quality = 'standard' } = {}) {
   try { url = new URL(result && result.url); path = decodeURIComponent(url.pathname); }
   catch (_) { throw failure('音乐组件未返回有效音频。', 'unavailable'); }
   const cache = mediaCacheURLPath();
-  if (url.protocol !== 'file:' || url.hostname || url.search || url.hash || result.type !== 'flac' || !cache ||
-    !path.startsWith(cache) || !/^[a-f0-9]{64}\.flac$/.test(path.slice(cache.length)))
+  if (url.protocol !== 'file:' || url.hostname || url.search || url.hash || !['m4a', 'flac'].includes(result.type) || !cache ||
+    !path.startsWith(cache) || !new RegExp('^[a-f0-9]{64}\\.' + result.type + '$').test(path.slice(cache.length)))
     throw failure('音频缓存来源不符合预期。', 'unavailable');
   return result;
 }

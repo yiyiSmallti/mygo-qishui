@@ -6,10 +6,6 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-function firstExisting(candidates) {
-  return candidates.find(candidate => candidate && fs.existsSync(candidate)) || '';
-}
-
 function macApplications(name) {
   return ['/Applications', path.join(os.homedir(), 'Applications')].map(dir => path.join(dir, name));
 }
@@ -57,11 +53,6 @@ function sodaAddon(name) {
   return soda ? path.join(soda.unpacked, name) : '';
 }
 
-function ffmpegPath() {
-  if (process.platform === 'darwin') return firstExisting(['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg']);
-  return firstExisting((process.env.PATH || '').split(path.delimiter).filter(Boolean).map(dir => path.join(dir.replace(/^"(.*)"$/, '$1'), 'ffmpeg.exe')));
-}
-
 // OS version as the desktop client reports it: Windows keeps os.version()
 // ("Windows 11 Pro"); macOS uses the product version ("26.0"), not the kernel
 // banner os.version() returns there.
@@ -98,4 +89,4 @@ function deviceName() {
   return name;
 }
 
-module.exports = { sodaComponents, sodaAddon, ffmpegPath, scanLabel, deviceName, osVersion };
+module.exports = { sodaComponents, sodaAddon, scanLabel, deviceName, osVersion };

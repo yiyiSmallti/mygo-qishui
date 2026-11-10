@@ -6,33 +6,19 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { spawn } = require('node:child_process');
 const readline = require('node:readline');
 const { pathToFileURL } = require('node:url');
+const { setTimeout: wait } = require('node:timers/promises');
 const { getTrackMetadata, getSearchMetadata } = require('./media-request.cjs');
-const { ffmpegPath, sodaAddon } = require('./local-env.cjs');
-const FFMPEG = ffmpegPath();
+const { sodaAddon } = require('./local-env.cjs');
+const { decryptFile, inspectFile } = require('./mp4-cenc.cjs');
 // Set from the request: MyGo's own data folder for this plugin, per OS.
 let CACHE = '';
 const controller = new AbortController();
-let encoder, temporary = [], stage = 'metadata';
-const timer = setTimeout(() => { controller.abort(); if (encoder) encoder.kill(); }, 26000);
+const temporary = [];
+let stage = 'metadata';
+const timer = setTimeout(() => controller.abort(), 26000);
 function fail(message, code = 'unavailable') { const e = new Error(message); e.code = code; e.safeMediaError = true; throw e; }
-async function stopEncoder() {
-  const child = encoder;
-  if (!child) return;
-  await new Promise(resolve => {
-    let settled = false;
-    const done = () => {
-      if (settled) return;
-      settled = true; clearTimeout(deadline); child.removeListener('close', done); resolve();
-    };
-    const deadline = setTimeout(done, 750);
-    child.once('close', done);
-    try { child.kill(); } catch { done(); }
-  });
-  if (encoder === child) encoder = null;
-}
 function allowedAudio(value) {
   try {
     const url = new URL(value);
@@ -80,44 +66,14 @@ async function download(url, target) {
 }
 function authorizedKey(stream) {
   const spade = stream.encrypt_info?.spade_a;
-  if (!spade) return '';
+  if (!spade) return Buffer.alloc(0);
   if (typeof spade !== 'string' || spade.length > 16384) fail('汽水返回的播放授权格式无效。');
   let key;
   try { key = require(sodaAddon('device.node')).decodeSpade(spade); }
   catch { fail('本机汽水播放组件无法处理这首歌的播放授权。'); }
-  if (typeof key === 'string' && /^[a-fA-F0-9]{32}$/.test(key)) return key;
-  if (Buffer.isBuffer(key) && key.length === 16) return key.toString('hex');
+  if (typeof key === 'string' && /^[a-fA-F0-9]{32}$/.test(key)) return Buffer.from(key, 'hex');
+  if (Buffer.isBuffer(key) && key.length === 16) return Buffer.from(key);
   fail('本机播放组件返回的授权格式暂不受支持。');
-}
-async function convert(input, output, key, expectedMs) {
-  if (!FFMPEG || !fs.existsSync(FFMPEG)) fail(process.platform === 'darwin' ? '未找到 FFmpeg，请先用 Homebrew 安装 ffmpeg。' : '未找到 FFmpeg，请安装后将 ffmpeg.exe 所在目录加入 PATH，并重启 MyGo。', 'setup');
-  const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-protocol_whitelist', 'file,pipe',
-    ...(key ? ['-decryption_key', key] : []), '-i', input, '-map', '0:a:0',
-    '-vn', '-sn', '-dn', '-map_metadata', '-1', '-c:a', 'flac', '-compression_level', '0',
-    '-f', 'flac', '-progress', 'pipe:1', '-nostats', '-y', output];
-  await new Promise((resolve, reject) => {
-    let duration = 0;
-    const child = spawn(FFMPEG, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
-    encoder = child;
-    let spawnFailed = false;
-    const progress = readline.createInterface({ input: child.stdout });
-    progress.on('line', line => { const m = /^out_time_us=(\d+)$/.exec(line); if (m) duration = Number(m[1]) / 1000; });
-    child.once('error', () => { spawnFailed = true; });
-    // close follows stdio closure. exit may arrive before the final progress
-    // record and incorrectly make a complete conversion look truncated.
-    child.once('close', code => {
-      progress.close();
-      if (encoder === child) encoder = null;
-      if (spawnFailed) reject(Object.assign(new Error('无法启动音频转换组件。'), { safeMediaError: true, code: 'setup' }));
-      else if (code !== 0 || controller.signal.aborted) reject(Object.assign(new Error('音频转换未完成，请重试或选择较低音质。'), { safeMediaError: true, code: 'unavailable' }));
-      else if (duration < expectedMs - 2000) reject(Object.assign(new Error('返回的音频未达到整首时长，未将其作为完整歌曲播放。'), { safeMediaError: true, code: 'unavailable' }));
-      else resolve();
-    });
-  });
-  const handle = await fs.promises.open(output, 'r');
-  const signature = Buffer.alloc(4);
-  try { await handle.read(signature, 0, 4, 0); } finally { await handle.close(); }
-  if (signature.toString() !== 'fLaC') fail('音频转换结果无效。');
 }
 async function validCachedFlac(file, expectedMs) {
   let handle;
@@ -138,6 +94,101 @@ async function validCachedFlac(file, expectedMs) {
     return Math.abs(samples * 1000 / sampleRate - expectedMs) <= 2000;
   } catch { return false; }
   finally { if (handle) await handle.close(); }
+}
+async function fileHash(file) {
+  const hash = crypto.createHash('sha256');
+  for await (const chunk of fs.createReadStream(file, { signal: controller.signal })) hash.update(chunk);
+  return hash.digest('hex');
+}
+async function validCachedMp4(file, expectedMs, expectedCodec) {
+  try {
+    const stat = await fs.promises.lstat(file), receiptStat = await fs.promises.lstat(file + '.json');
+    if (!stat.isFile() || stat.isSymbolicLink() || !receiptStat.isFile() || receiptStat.isSymbolicLink()
+        || receiptStat.size > 4096) return false;
+    const receipt = JSON.parse(await fs.promises.readFile(file + '.json', 'utf8'));
+    if (receipt.schema !== 1 || receipt.codec !== expectedCodec || receipt.size !== stat.size
+        || !Number.isFinite(receipt.durationMs)
+        || Math.abs(receipt.durationMs - expectedMs) > 2000 || !/^[a-f0-9]{64}$/.test(receipt.sha256)) return false;
+    await inspectFile(file, { expectedMs, expectedCodec, signal: controller.signal });
+    return receipt.sha256 === await fileHash(file);
+  } catch (error) {
+    if (controller.signal.aborted) fail('音频处理已取消。');
+    return false;
+  }
+}
+async function discardCache(file) {
+  for (const candidate of [file, file + '.json']) {
+    try { await fs.promises.unlink(candidate); }
+    catch (error) { if (error.code !== 'ENOENT') fail('无法清理损坏的音频缓存，请关闭当前播放后重试。'); }
+  }
+}
+async function publishCache(output, receiptFile, destination, expectedMs, codec) {
+  const lock = destination + '.lock', deadline = Date.now() + 5000;
+  const lease = path.join(lock, process.pid + '-' + crypto.randomBytes(8).toString('hex'));
+  while (true) {
+    if (controller.signal.aborted) fail('音频处理已取消。');
+    try {
+      await fs.promises.mkdir(lock, { mode: 0o700 });
+      fs.writeFileSync(lease, '', { flag: 'wx', mode: 0o600 });
+      break;
+    }
+    catch (error) {
+      if (error.code === 'ENOENT') continue;
+      if (error.code !== 'EEXIST') throw error;
+      // A crash can leave this empty publication lock behind. It is held
+      // only for renaming finished files, never during network requests.
+      let stat;
+      try { stat = await fs.promises.lstat(lock); }
+      catch (changed) { if (changed.code === 'ENOENT') continue; throw changed; }
+      if (stat.isDirectory() && !stat.isSymbolicLink() && Date.now() - stat.mtimeMs > 30000) {
+        const owners = await fs.promises.readdir(lock).catch(error => { if (error.code === 'ENOENT') return []; throw error; });
+        let abandoned = owners.length === 0;
+        if (owners.length === 1 && /^[1-9][0-9]*-[a-f0-9]{16}$/.test(owners[0])) {
+          try { process.kill(Number(owners[0].split('-')[0]), 0); }
+          catch (error) { if (error.code === 'ESRCH') abandoned = true; }
+          if (abandoned) {
+            try { await fs.promises.unlink(path.join(lock, owners[0])); }
+            catch (changed) { if (changed.code !== 'ENOENT') throw changed; }
+          }
+        }
+        if (abandoned) {
+          // A new owner has a different lease name. rmdir cannot remove an
+          // active nonempty lock even if an old stat raced with publication.
+          try { await fs.promises.rmdir(lock); }
+          catch (changed) { if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(changed.code)) throw changed; }
+          continue;
+        }
+      }
+      if (Date.now() >= deadline) fail('另一个播放请求正在写入音频缓存，请稍后重试。');
+      await wait(50, undefined, { signal: controller.signal });
+    }
+  }
+  try {
+    if (await validCachedMp4(destination, expectedMs, codec)) return;
+    await discardCache(destination);
+    await fs.promises.rename(output, destination);
+    await fs.promises.rename(receiptFile, destination + '.json');
+  } finally {
+    await fs.promises.unlink(lease);
+    await fs.promises.rmdir(lock);
+  }
+}
+function trimCache(destination) {
+  const entries = fs.readdirSync(CACHE).filter(n => /^[a-f0-9]{64}\.(?:flac|m4a)$/.test(n)).flatMap(n => {
+    const file = cacheFile(n), info = fs.lstatSync(file);
+    return info.isFile() && !info.isSymbolicLink() ? [{ file, size: info.size, time: info.mtimeMs }] : [];
+  }).sort((a, b) => a.time - b.time);
+  let bytes = entries.reduce((sum, e) => sum + e.size, 0);
+  for (const entry of entries) {
+    if (bytes <= 512 * 1024 * 1024) break;
+    if (entry.file === destination) continue;
+    try {
+      fs.unlinkSync(entry.file); bytes -= entry.size;
+      if (entry.file.endsWith('.m4a')) {
+        try { fs.unlinkSync(entry.file + '.json'); } catch (error) { if (error.code !== 'ENOENT') continue; }
+      }
+    } catch { /* A player can still have an older cache open on Windows. */ }
+  }
 }
 async function prepareStream(message, data) {
   useCacheDir(message.cacheDir);
@@ -165,42 +216,42 @@ async function prepareStream(message, data) {
   if (!selected) fail('汽水未返回当前播放器支持的音频档位。');
   const sourceQuality = selected.video_meta.quality;
   const quality = sourceQuality === 'lossless' ? 'lossless' : sourceQuality === 'highest' ? 'high' : 'standard';
+  const codec = selected.video_meta.codec_type;
+  if (!['aac', 'flac'].includes(codec) || !['m4a', 'mp4'].includes(selected.video_meta.vtype))
+    fail('汽水返回的音频编码或封装暂不受支持。', 'unsupported');
   const mediaPrefix = mediaType === 'track' ? '' : mediaType + ':';
-  const digest = crypto.createHash('sha256').update(mediaPrefix + message.accountId + ':' + message.trackId + ':' + sourceQuality + ':' + duration).digest('hex');
+  const identity = mediaPrefix + message.accountId + ':' + message.trackId + ':' + sourceQuality + ':' + duration;
+  const legacyDigest = crypto.createHash('sha256').update(identity).digest('hex');
+  const digest = crypto.createHash('sha256').update('cenc-v1:' + identity + ':' + codec).digest('hex');
   fs.mkdirSync(CACHE, { recursive: true });
-  const destination = cacheFile(digest + '.flac');
-  if (!(await validCachedFlac(destination, modelMs))) {
-    if (fs.existsSync(destination)) {
-      try { await fs.promises.unlink(destination); }
-      catch { fail('无法清理损坏的音频缓存，请关闭当前播放后重试。'); }
-    }
+  const legacy = cacheFile(legacyDigest + '.flac');
+  let destination = cacheFile(digest + '.m4a'), type = 'm4a';
+  // Old conversions remain usable, but only after the fresh authorization
+  // and duration checks above. They never authorize preview-only responses.
+  if (await validCachedFlac(legacy, modelMs)) { destination = legacy; type = 'flac'; }
+  else if (!(await validCachedMp4(destination, modelMs, codec))) {
     const nonce = crypto.randomBytes(6).toString('hex');
-    const input = cacheFile(digest + '-' + nonce + '.audio');
     const output = cacheFile(digest + '-' + nonce + '.part');
-    temporary.push(input, output);
-    let key = authorizedKey(selected);
-    stage = 'download';
-    await download(allowedAudio(selected.main_url), input);
-    stage = 'convert';
-    await convert(input, output, key, modelMs);
-    stage = 'cache';
-    key = '';
-    if (!(await validCachedFlac(output, modelMs))) fail('转换后的音频时长或格式无效。');
-    if (!fs.existsSync(destination)) await fs.promises.rename(output, destination);
+    const receiptFile = cacheFile(digest + '-' + nonce + '.receipt-part');
+    temporary.push(output, receiptFile);
+    let key;
+    try {
+      key = authorizedKey(selected);
+      stage = 'download';
+      await download(allowedAudio(selected.main_url), output);
+      stage = 'decrypt';
+      const info = await decryptFile(output, { key, expectedMs: modelMs, expectedCodec: codec, signal: controller.signal });
+      stage = 'cache';
+      const receipt = { schema: 1, codec, size: info.size, durationMs: info.durationMs, sha256: await fileHash(output) };
+      await fs.promises.writeFile(receiptFile, JSON.stringify(receipt), { flag: 'wx', mode: 0o600 });
+      await publishCache(output, receiptFile, destination, modelMs, codec);
+      if (!(await validCachedMp4(destination, modelMs, codec))) fail('音频缓存校验失败，请重试。');
+    } finally { if (key) key.fill(0); }
   }
   const stat = fs.statSync(destination);
   if (stat.size < 128) fail('音频缓存不完整，请刷新后重试。');
-  // Bounded cache: remove old files only in this plugin-owned cache directory.
-  const entries = fs.readdirSync(CACHE).filter(n => /^[a-f0-9]{64}\.flac$/.test(n)).map(n => {
-    const file = cacheFile(n); const info = fs.statSync(file); return { file, size: info.size, time: info.mtimeMs };
-  }).sort((a, b) => a.time - b.time);
-  let bytes = entries.reduce((sum, e) => sum + e.size, 0);
-  for (const entry of entries) {
-    if (bytes <= 512 * 1024 * 1024) break;
-    if (entry.file === destination) continue;
-    try { fs.unlinkSync(entry.file); bytes -= entry.size; } catch {}
-  }
-  return { url: pathToFileURL(destination).href, type: 'flac', quality, size: stat.size,
+  trimCache(destination);
+  return { url: pathToFileURL(destination).href, type, quality, size: stat.size,
     bitRate: Math.round(stat.size * 8000 / modelMs) };
 }
 async function run(message) {
@@ -215,7 +266,7 @@ async function run(message) {
 const input = readline.createInterface({ input: process.stdin });
 let processing = false;
 input.on('close', () => {
-  controller.abort(); if (encoder) encoder.kill();
+  controller.abort();
   if (!processing) { clearTimeout(timer); process.exit(0); }
 });
 input.once('line', async line => {
@@ -226,14 +277,13 @@ input.once('line', async line => {
     result = { ok: true, value: await run(JSON.parse(line)) };
   }
   catch (error) {
-    const stageNames = { metadata: '读取播放信息', download: '读取音频', convert: '转换音频', cache: '写入音频缓存' };
+    const stageNames = { metadata: '读取播放信息', download: '读取音频', decrypt: '解密音频', cache: '写入音频缓存' };
     const networkCode = error?.cause?.code || error?.code;
     const hint = typeof networkCode === 'string' && /^[A-Z0-9_]{1,40}$/.test(networkCode) ? '（' + networkCode + '）' : '';
     result = { ok: false, code: error.safeMediaError ? error.code : 'unavailable',
       message: error.safeMediaError ? error.message : (stageNames[stage] || '播放音乐') + '失败' + hint + '，请稍后重试。' };
   } finally {
     clearTimeout(timer);
-    await stopEncoder();
     for (const file of temporary) { try { fs.unlinkSync(file); } catch {} }
   }
   fs.writeSync(1, 'MYGO_MEDIA_RESULT:' + JSON.stringify(result) + '\n');

@@ -1,6 +1,6 @@
 # 汽水音乐 · MyGo 插件
 
-0.6.6 兼容原版 MyGo Music v0.1.22，不需要改版播放器。扫码和官方二次验证由插件随包的原生登录组件显示，使用系统内嵌网页，不启动独立 Edge／Chrome。账号、音乐库、搜索、歌词、推荐及播放保持原有行为。
+0.6.7 兼容原版 MyGo Music v0.1.22，不需要改版播放器。扫码和官方二次验证由插件随包的原生登录组件显示，使用系统内嵌网页，不启动独立 Edge／Chrome。账号、音乐库、搜索、歌词、推荐及播放保持原有行为。
 
 Apple Silicon Mac 已通过原版 MyGo 插件入口实际取码、二维码显示、验证回调接续与取消、关窗和旧账号保留检查。Windows 登录组件已编译，实机扫码和真实账号二次验证待确认。
 
@@ -48,7 +48,7 @@ Apple Silicon Mac 已通过原版 MyGo 插件入口实际取码、二维码显�
 原版 MyGo 可直接安装本插件，任务栏和布局补丁是可选项。
 
 1. GitHub 来源插件在插件菜单检查更新；首次从 GitHub 安装 `yiyiSmallti/mygo-qishui`。
-2. 本机来源插件从 [v0.6.6 发布页](https://github.com/yiyiSmallti/mygo-qishui/releases/tag/v0.6.6) 下载对应平台的 `plugin-*.zip`，从本机安装升级；不能用仓库完整源码 ZIP 替代。
+2. 本机来源插件从 [v0.6.7 发布页](https://github.com/yiyiSmallti/mygo-qishui/releases/tag/v0.6.7) 下载对应平台的 `plugin-*.zip`，从本机安装升级；不能用仓库完整源码 ZIP 替代。
 3. 启用汽水音源，允许运行程序。在账号菜单登录，使用手机汽水 App 扫描插件登录窗口中的二维码。
 4. 在手机确认，按需在电脑登录窗口完成官方安全验证。成功后自动关闭；提前关窗会取消登录并保留原账号。
 
@@ -60,13 +60,17 @@ Apple Silicon Mac 已通过原版 MyGo 插件入口实际取码、二维码显�
 
 播放只使用汽水向当前插件账号返回的完整音频。服务器未提供完整播放信息或时长不足时，插件会报告无法播放，不把试听片段当作整首歌曲。
 
-当前插件先将汽水音频转换为 FLAC，用于统一播放与缓存时长校验。**AAC 转为 FLAC 不会恢复已损失的信息，也不会提升音质**；界面音质按服务端实际提供的源音质标记，不因输出扩展名为 `.flac` 就标成无损。
+0.6.7 的播放路径已改为插件内置的 **CENC 解密**，保留汽水返回的原始 AAC-LC／FLAC 编码和 MP4 容器，以 `.m4a` 缓存交给 MyGo 解码，不再转码或调用 FFmpeg。0.6.6 及更早版本仍使用旧的 FFmpeg 路径。
+
+解密使用 Node.js 内置 `crypto`，播放密钥仍由汽水向当前账号返回的授权和官方组件取得，不写入缓存或日志。仅接收已支持的完整单音轨 MP4、CENC AES-CTR、8／16 字节 IV 和分段加密；未知加密方式、分片 MP4、密钥轮换或当前 MyGo 不支持的 AAC 规格会明确提示，不能用文件扩展名替代格式校验。MyGo 无需修改主程序。
+
+缓存会核对完整时长、采样范围和 SHA256；半成品不会用于播放，并发请求只发布一个完整缓存。旧版生成的有效 FLAC 缓存可在重新核对当前账号的完整播放授权后继续使用。界面音质按服务端实际提供的源音质标记，文件名 `.m4a` 不代表有损或无损。
 
 音乐库按汽水接口游标分页，并去除重复条目。当前单个歌单最多载入 5000 首，歌单/收藏列表最多 2000 项。歌单暂未加载完整时会显示说明，重新打开可继续加载；搜索结果过多时可缩小关键词范围。网络较慢或文件较大时，可稍后重试或选择较低音质。
 
 ## 本机依赖
 
-Node.js 和 FFmpeg 需自行安装。登录使用插件自带的内嵌窗口，Windows 需要 WebView2 Runtime，Mac 使用系统 WebKit，无需单独安装 Chrome／Edge。Windows x64 可自动从官方安装包提取汽水组件，无需安装或启动完整汽水客户端；仓库和插件 ZIP 不附带原生组件。安装后需在 MyGo 中授予此插件「运行程序」权限，辅助进程负责设备准备、签名请求和音频转换，扫码与验证由插件登录窗口完成。
+0.6.7 播放无需安装 FFmpeg；Node.js 和下述汽水组件仍需准备。登录使用插件自带的内嵌窗口，Windows 需要 WebView2 Runtime，Mac 使用系统 WebKit，无需单独安装 Chrome／Edge。Windows x64 可自动从官方安装包提取汽水组件，无需安装或启动完整汽水客户端；仓库和插件 ZIP 不附带原生组件。安装后需在 MyGo 中授予此插件「运行程序」权限，辅助进程负责设备准备、签名请求和音频解密，扫码与验证由插件登录窗口完成。
 
 ### Node.js 路径设置
 
@@ -79,7 +83,7 @@ Windows 可在 PowerShell 中运行 `where.exe node` 查找当前安装位置，
 ### macOS（Apple Silicon 已验证）
 
 - **Node.js 24 或更新版本**：依次尝试 `/opt/homebrew/bin/node`、`/usr/local/bin/node` 和 `PATH` 中的 `node`。从 Finder／Dock 启动 MyGo 时通常没有交互式 shell 的 `PATH`，仅安装在 nvm 等私有目录的 Node.js 可能无法找到。
-- **FFmpeg**：查找 `/opt/homebrew/bin/ffmpeg` 和 `/usr/local/bin/ffmpeg`。已有 Homebrew 时可运行 `brew install node ffmpeg`；本机已验证 Node.js 24 和 26。
+- **音频解密**：由插件与 Node.js 内置模块完成，无需 FFmpeg。已有 Homebrew 时可运行 `brew install node`；0.6.6 及更早版本仍需另行安装 FFmpeg。
 - **内嵌登录**：使用系统 WebKit，由插件自带登录组件显示，无需外部浏览器。
 - **汽水音乐 3.7.0 官方客户端**：安装到 `/Applications/汽水音乐.app` 或 `~/Applications/汽水音乐.app`。从 `Contents/Resources/app.asar` 读取版本，并优先从 `app-<Node 架构>.asar.unpacked` 加载本机组件，兼容常规 `app.asar.unpacked` 目录。Apple Silicon 使用 ARM64 Node.js 和对应组件；`device.node`、`bdms.node` 及其依赖库应保留在官方安装位置。
 
@@ -94,7 +98,7 @@ Windows x64 新增免安装组件准备流程（0.5.1 已发布，Windows 实机
 - **汽水组件免安装**：未找到完整的官方客户端组件时，首次登录或请求播放信息会从汽水官方 CDN 下载固定的 **3.7.0 x64** 安装包（约 144 MiB），校验 SHA256，再用系统 `tar.exe` 提取 `app.asar`、`device.node`、`bdms.node` 和 `metasecml.dll`。**不运行安装包，不创建官方客户端快捷方式或自启动项**。已有客户端时，查找 `%LOCALAPPDATA%\Programs\Soda Music`、`%ProgramFiles%\Soda Music` 和 `%ProgramFiles(x86)%\Soda Music` 中完整的安装目录，按版本由新到旧选择。
 - 免安装需要 **x64 Node.js** 和支持读取此 7z 归档的 Windows 系统 `tar.exe`。新版 Windows 11 有相应能力；旧版 Windows 的归档工具可能不支持，此时会提示更新 Windows 的归档工具。下载失败、哈希不符、磁盘权限等问题会单独报告，不清除已有登录。
 - 提取的组件存放在本插件数据目录的 `native-sdk-3.7.0-x64`，校验通过后重复使用；有效缓存无需再次下载。下载的完整安装包和解包临时文件会在完成或取消后删除。并发请求会等待同一次准备完成。
-- **FFmpeg**：安装 Windows 版 FFmpeg，把包含 `ffmpeg.exe` 的目录加入 `PATH`，然后重启 MyGo。播放仍需要此音频转换工具；免安装汽水组件不等于无需任何本机依赖。
+- **音频解密**：0.6.7 已包含所需模块，播放无需 FFmpeg 或额外解密程序。Node.js 与汽水签名／授权组件仍需按上述方式准备。
 
 下载固定指向 [汽水官方 3.7.0 x64 安装包](https://lf-luna-release.qishui.com/obj/luna-release/3.7.0/452316191/SodaMusic-v3.7.0-official-win32_x64.exe)，整体 SHA256 为 `e58578aec410e2c9c24835e92a1dc74d0fda982be1cf1003034538255baab0e4`，与 [Microsoft winget 3.7.0 清单](https://github.com/microsoft/winget-pkgs/blob/master/manifests/b/ByteDance/SodaMusic/3.7.0/ByteDance.SodaMusic.installer.yaml) 一致。仅提取与校验官方字节，不修改签名算法或上传账号到第三方服务。系统归档支持参考 [Microsoft tar 文档](https://learn.microsoft.com/en-us/windows/tar/)。
 
