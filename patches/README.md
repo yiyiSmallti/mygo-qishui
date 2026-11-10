@@ -1,4 +1,4 @@
-# MyGo Music 播放器补丁
+# MyGo Windows 可选界面增强
 
 补丁包含 Windows 任务栏播放条及听歌页面布局。必须选择与上游标签一致的文件，不适用于任意版本：
 
@@ -7,9 +7,9 @@
 | **v0.1.22（当前适配）** | `mygo-0.1.22-taskbar-player.patch` |
 | v0.1.21 | `mygo-0.1.21-taskbar-player.patch` |
 
-0.6.1 的登录组件随插件分发，原版播放器即可使用。下列补丁仅提供任务栏与页面样式扩展。
+汽水插件 0.6.7 的登录与播放可直接使用原版 MyGo Music v0.1.22。当前 Windows 插件包沿用 0.6.6 的增强组件，可按需安装小图标听歌模式、设置页入口和任务栏播放条。
 
-## 插件内的增强管理窗口（0.6.6）
+## 通过插件安装增强
 
 Windows 插件包包含增强管理窗口、完整增强主程序及对应源码。组件包含小图标听歌模式、插件设置页入口和任务栏播放条。它只在确认后备份、更新单个 EXE 并重启，保留原有账号和插件资料，不依赖独立浏览器或 PowerShell。
 
@@ -31,7 +31,7 @@ Windows 插件包包含增强管理窗口、完整增强主程序及对应源码
 
 ## 应用及构建
 
-在本仓库目录运行，需 Git、Go 1.27.3，以及 Node.js 22.6 以上或 Bun：
+在本仓库目录运行，需 Git、Go 1.27.3，以及 Node.js 24 或更新版本：
 
 ```powershell
 git clone --branch v0.1.22 --depth 1 https://github.com/egoist/mygo-music.git .verification/mygo-music

@@ -2,7 +2,7 @@
   "name": "mygo-qishui",
   "version": "0.6.7",
   "private": true,
-  "description": "MyGo 汽水音乐插件及 Windows 任务栏与推荐页补丁",
+  "description": "支持 Windows/macOS 的 MyGo 汽水音乐插件，提供音乐库、搜索、推荐电台与原编码播放，附可选 Windows 界面增强。",
   "scripts": {
     "test": "node scripts/test.mjs"
   },
