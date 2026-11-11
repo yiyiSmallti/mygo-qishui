@@ -4,7 +4,7 @@
 
 当前版本 **0.6.8**，兼容原版 **MyGo Music v0.1.22**。播放保留 AAC-LC／FLAC 原编码，无需安装 FFmpeg。Windows 还提供可选的小图标听歌模式和任务栏播放条，增强助手随插件提供。
 
-**0.6.8：Mac 也无需安装汽水客户端。** Apple Silicon Mac 首次自动下载约 18 MiB 的官方精简归档，校验后只提取四个必需文件；组件约占 9.4 MiB，有效缓存可离线复用。
+**Windows x64 与 Apple Silicon Mac 均无需安装汽水音乐官方客户端，也无需 FFmpeg。** 所需汽水组件由插件自动下载、校验并提取；首次准备 Windows 约下载 144 MiB，Mac 约下载 18 MiB。仍需安装对应架构的 Node.js 24+。
 
 [下载最新版](https://github.com/yiyiSmallti/mygo-qishui/releases/tag/v0.6.8) · [详细使用指南](qishui-account/README.md) · [历史变更与验证记录](docs/history.md) · [反馈问题](https://github.com/yiyiSmallti/mygo-qishui/issues)
 
@@ -12,10 +12,10 @@
 
 ## 平台支持
 
-| 平台 | 当前状态 | 安装包 |
+| 平台 | 需要准备 | 安装包 |
 | --- | --- | --- |
-| Windows x64 | 用户已实机测试 0.6.7，反馈暂未发现问题 | `plugin-windows-amd64.zip` |
-| macOS Apple Silicon | 免客户端下载与缓存、匿名设备注册、真实授权播放和定位已验证 | `plugin-darwin-arm64.zip` |
+| Windows x64 | x64 Node.js 24+、WebView2 Runtime；汽水组件自动准备 | `plugin-windows-amd64.zip` |
+| macOS Apple Silicon | ARM64 Node.js 24+；汽水组件自动准备，使用系统 WebKit | `plugin-darwin-arm64.zip` |
 | macOS Intel / Linux | 暂无已验证的安装包 | — |
 
 ## 快速开始
@@ -115,7 +115,7 @@ Windows 安装包已附带增强安装助手。确认安装后可获得以下功
 ## 使用范围
 
 - 播放取决于当前账号的服务端授权。插件只使用完整授权音频，不把试听片段当作整首；支持歌曲和上传原声，暂不支持视频作品。
-- 0.6.7 支持当前已适配的 AAC-LC／FLAC 与 CENC 音频。未知加密、分片媒体、密钥轮换或不支持的 AAC 规格会明确提示。
+- 当前版本支持已适配的 AAC-LC／FLAC 与 CENC 音频。未知加密、分片媒体、密钥轮换或不支持的 AAC 规格会明确提示。
 - 音乐库按接口游标分页：单个歌单最多载入 5000 首，歌单／收藏列表最多 2000 项；未加载完整时会显示说明。
 - 歌单和专辑收藏当前只读。主动点击心形按钮或对应快捷键，才会添加或取消汽水账号中的歌曲喜欢。
 - Node.js 和系统网页运行时仍需准备。Windows x64 与 Apple Silicon Mac 均支持自动准备汽水组件，无需安装官方客户端。播放不依赖 FFmpeg。Intel Mac 和 Linux 尚无已验证安装包。

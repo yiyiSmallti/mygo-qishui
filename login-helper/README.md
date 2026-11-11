@@ -34,9 +34,9 @@ go -C login-helper run ./cmd/package -root .. -native ../dist/login-helper -out 
 
 向验证程序设置 `MYGO_QA_PLUGIN_DIR`、`MYGO_QA_STORAGE`（只读取现有匿名设备记录）、`MYGO_NATIVE_QA_MODE`、`MYGO_NATIVE_QA_RESULT`、`MYGO_NATIVE_QA_SCREENSHOT` 和 `MYGO_STOCK_QA_RESULT`。`mfa-success` / `mfa-cancel` 使用真实随包 React 渲染、点击与卸载受控验证组件，检查依赖在官方脚本入口前可用；该受控组件不替代真实账号的官方验证。模式为 `mfa-success`、`mfa-cancel`、`qr-origin`、`qr-token`、`unsafe-error`、`bootstrap`、`navigation-failure`。`bootstrap` 断言本地宿主页标记与页面 URL/来源一致；`navigation-failure` 在真实取码后导航到不存在的域名，必须返回 `load`。验证会创建临时插件数据，检查旧会话保留与原账号文件不变，不扫描或确认真实账号；截图会先隐藏二维码。
 
-Mac 已通过上述原版入口取码和窗口验证，Windows 本轮只完成交叉编译，真实账号确认及平台二次验证仍需在目标电脑完成。
+上述原版登录组件专项检查已在 Mac 完成取码和窗口验证，Windows 在该轮仅完成交叉编译，不代表当前全部平台状态。后续 Windows 0.6.7 已收到用户实机测试暂未发现问题的反馈；0.6.8 的 Mac 免客户端准备和真实播放另有专项验证，详见 [历史记录](../docs/history.md)。这些检查不替代真实账号的人工扫码确认及官方二次验证。
 
-## 随插件安装的增强组件（0.6.6）
+## 随插件安装的增强组件（自 0.6.6 起）
 
 Windows ZIP 包含 `native/style-installer.exe`、`native/layout-player.exe`、校验清单和完整对应源码。增强程序包含听歌模式布局、插件设置动作、侧栏兼容规则，以及原有 Windows 任务栏播放条和逐字歌词显示；不包含登录补丁。原版首次仍需确认更新主程序；新主程序有设置页按钮后，侧栏重复项隐藏。
 

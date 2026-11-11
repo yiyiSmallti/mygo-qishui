@@ -24,6 +24,6 @@
 
 ## 可选增强主程序与管理窗口
 
-0.6.6 的 Windows 插件包可选安装基于 MyGo Music v0.1.22 的完整增强程序，包含布局、设置页动作和 Windows 任务栏组件，不包含登录补丁。完整对应源码和原 AGPL v3 许可随包位于 `native/layout-corresponding-source.zip`，补丁位于 `patches/mygo-0.1.22-enhancements.patch`。原生管理窗口沿用 MyGo UI；其源码随本项目提供。
+Windows 插件包自 0.6.6 起可选安装基于 MyGo Music v0.1.22 的完整增强程序，包含布局、设置页动作和 Windows 任务栏组件，不包含登录补丁。完整对应源码和原 AGPL v3 许可随包位于 `native/layout-corresponding-source.zip`，补丁位于 `patches/mygo-0.1.22-enhancements.patch`。原生管理窗口沿用 MyGo UI；其源码随本项目提供。
 
 新增 UI 依赖为 `github.com/go-text/typesetting v0.3.5`（Unlicense OR BSD-3-Clause）和 `golang.org/x/image v0.46.0`（BSD）；任务栏使用 `golang.org/x/sys v0.49.0`（BSD）。原始许可分别保存在 `native-licenses/go-text-typesetting`、`native-licenses/x-image-BSD` 和 `native-licenses/x-sys-BSD`。

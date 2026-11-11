@@ -2,7 +2,7 @@
 
 把汽水音乐账号接入 MyGo Music，使用音乐库、搜索、歌词、推荐和场景电台。当前 **0.6.8** 兼容原版 **MyGo Music v0.1.22**，播放无需 FFmpeg；Windows 小图标布局和任务栏播放条可按需安装。
 
-**0.6.8 的 Apple Silicon Mac 无需安装汽水客户端。** 首次会从官方精简归档自动准备组件，之后可复用缓存。
+**Windows x64 与 Apple Silicon Mac 均无需安装汽水音乐官方客户端，也无需 FFmpeg。** 首次使用由插件从官方 CDN 自动准备所需组件：Windows 约下载 144 MiB，Mac 约下载 18 MiB；之后可复用有效缓存。仍需安装对应架构的 Node.js 24+。
 
 Windows 用户已于 2026-11-10 实机测试 0.6.7，反馈暂未发现问题。Apple Silicon Mac 已完成已有会话播放、内嵌取码和隔离场景检查。历史版本及验证范围见 [历史记录](../docs/history.md)。
 
@@ -44,7 +44,7 @@ Windows 包包含增强管理助手，可安装小图标听歌模式、紧凑推
 
 播放只使用汽水向当前插件账号返回的完整音频。服务器未提供完整播放信息或时长不足时，插件会报告无法播放，不把试听片段当作整首歌曲。
 
-0.6.7 的播放路径已改为插件内置的 **CENC 解密**，保留汽水返回的原始 AAC-LC／FLAC 编码和 MP4 容器，以 `.m4a` 缓存交给 MyGo 解码，不再转码或调用 FFmpeg。0.6.6 及更早版本仍使用旧的 FFmpeg 路径。
+当前版本使用插件内置的 **CENC 解密**，保留汽水返回的原始 AAC-LC／FLAC 编码和 MP4 容器，以 `.m4a` 缓存交给 MyGo 解码，无需转码或调用 FFmpeg。
 
 解密使用 Node.js 内置 `crypto`，播放密钥仍由汽水向当前账号返回的授权和官方组件取得，不写入缓存或日志。仅接收已支持的完整单音轨 MP4、CENC AES-CTR、8／16 字节 IV 和分段加密；未知加密方式、分片 MP4、密钥轮换或当前 MyGo 不支持的 AAC 规格会明确提示，不能用文件扩展名替代格式校验。MyGo 无需修改主程序。
 
@@ -54,7 +54,7 @@ Windows 包包含增强管理助手，可安装小图标听歌模式、紧凑推
 
 ## 本机依赖
 
-0.6.7 播放无需安装 FFmpeg；Node.js 和下述汽水组件仍需准备。登录使用插件自带的内嵌窗口，Windows 需要 WebView2 Runtime，Mac 使用系统 WebKit，无需单独安装 Chrome／Edge。Windows x64 和 Apple Silicon Mac 可自动从官方归档提取汽水组件，无需安装或启动完整汽水客户端；仓库和插件 ZIP 不附带汽水官方原生 SDK。安装后需在 MyGo 中授予此插件「运行程序」权限，辅助进程负责设备准备、签名请求和音频解密，扫码与验证由插件登录窗口完成。
+当前版本播放无需安装 FFmpeg；使用者准备 Node.js，汽水组件可由插件自动准备。登录使用插件自带的内嵌窗口，Windows 需要 WebView2 Runtime，Mac 使用系统 WebKit，无需单独安装 Chrome／Edge。Windows x64 和 Apple Silicon Mac 可自动从官方归档提取汽水组件，无需安装或启动完整汽水客户端；仓库和插件 ZIP 不附带汽水官方原生 SDK。安装后需在 MyGo 中授予此插件「运行程序」权限，辅助进程负责设备准备、签名请求和音频解密，扫码与验证由插件登录窗口完成。
 
 ### Node.js 路径设置
 
@@ -67,11 +67,10 @@ Windows 可在 PowerShell 中运行 `where.exe node` 查找当前安装位置，
 ### macOS（Apple Silicon 已验证）
 
 - **Node.js 24 或更新版本**：依次尝试 `/opt/homebrew/bin/node`、`/usr/local/bin/node` 和 `PATH` 中的 `node`。从 Finder／Dock 启动 MyGo 时通常没有交互式 shell 的 `PATH`，仅安装在 nvm 等私有目录的 Node.js 可能无法找到。
-- **音频解密**：由插件与 Node.js 内置模块完成，无需 FFmpeg。已有 Homebrew 时可运行 `brew install node`；0.6.6 及更早版本仍需另行安装 FFmpeg。
+- **音频解密**：由插件与 Node.js 内置模块完成，无需 FFmpeg。已有 Homebrew 时可运行 `brew install node`。
 - **内嵌登录**：使用系统 WebKit，由插件自带登录组件显示，无需外部浏览器。
 - **汽水组件自动准备**：首次登录或播放时，从汽水官方 CDN 下载固定的 **3.7.0 ARM64 精简归档**（约 18 MiB），校验整个归档的 SHA256，再用系统 `/usr/bin/tar` 只提取 `app.asar`、`device.node`、`bdms.node` 和 `libMetaSecML.dylib`。不安装或运行 `.app`，无需挂载 DMG；每个文件还会核对 SHA256 与 Mach-O 架构。
 - 提取后的组件存放在本插件数据目录的 `native-sdk-3.7.0-darwin-arm64`，约占 9.4 MiB；有效缓存可离线复用。首次归档、提取半成品和准备锁在完成或取消后清理。已有官方客户端也不会被修改，原账号与音乐缓存保留。
-- **旧版 0.6.7**：尚未包含 Mac 自动准备流程，仍需安装到 `/Applications/汽水音乐.app` 或 `~/Applications/汽水音乐.app` 的汽水音乐 3.7.0 组件。
 
 Mac 免安装流程需要 ARM64 Node.js 24 或更新版本；Node.js 安装在其他位置时，可在插件设置中填写路径，无需设置汽水客户端位置。Intel Mac 尚无已验证的自动准备安装包。
 
@@ -86,7 +85,7 @@ Windows x64 支持免安装组件准备：
 - **汽水组件免安装**：未找到完整的官方客户端组件时，首次登录或请求播放信息会从汽水官方 CDN 下载固定的 **3.7.0 x64** 安装包（约 144 MiB），校验 SHA256，再用系统 `tar.exe` 提取 `app.asar`、`device.node`、`bdms.node` 和 `metasecml.dll`。**不运行安装包，不创建官方客户端快捷方式或自启动项**。已有客户端时，查找 `%LOCALAPPDATA%\Programs\Soda Music`、`%ProgramFiles%\Soda Music` 和 `%ProgramFiles(x86)%\Soda Music` 中完整的安装目录，按版本由新到旧选择。
 - 免安装需要 **x64 Node.js** 和支持读取此 7z 归档的 Windows 系统 `tar.exe`。新版 Windows 11 有相应能力；旧版 Windows 的归档工具可能不支持，此时会提示更新 Windows 的归档工具。下载失败、哈希不符、磁盘权限等问题会单独报告，不清除已有登录。
 - 提取的组件存放在本插件数据目录的 `native-sdk-3.7.0-x64`，校验通过后重复使用；有效缓存无需再次下载。下载的完整安装包和解包临时文件会在完成或取消后删除。并发请求会等待同一次准备完成。
-- **音频解密**：0.6.7 已包含所需模块，播放无需 FFmpeg 或额外解密程序。Node.js 与汽水签名／授权组件仍需按上述方式准备。
+- **音频解密**：插件已包含所需模块，播放无需 FFmpeg 或额外解密程序。Node.js 与汽水签名／授权组件仍需按上述方式准备。
 
 下载固定指向 [汽水官方 3.7.0 x64 安装包](https://lf-luna-release.qishui.com/obj/luna-release/3.7.0/452316191/SodaMusic-v3.7.0-official-win32_x64.exe)，整体 SHA256 为 `e58578aec410e2c9c24835e92a1dc74d0fda982be1cf1003034538255baab0e4`，与 [Microsoft winget 3.7.0 清单](https://github.com/microsoft/winget-pkgs/blob/master/manifests/b/ByteDance/SodaMusic/3.7.0/ByteDance.SodaMusic.installer.yaml) 一致。仅提取与校验官方字节，不修改签名算法或上传账号到第三方服务。系统归档支持参考 [Microsoft tar 文档](https://learn.microsoft.com/en-us/windows/tar/)。
 
@@ -106,7 +105,8 @@ Windows x64 支持免安装组件准备：
 
 Windows 0.6.7 已收到用户“实机测试暂未发现问题”的反馈，人工反馈与自动化检查分别记录。0.6.8 已通过 8 项 Mac 组件准备检查、8 组私有组件真实播放检查及 2 项 Windows 准备锁回归，官方客户端访问次数为 0。既有记录另包含 130 项插件回归、21 项加密样本校验和 8 组隔离播放流程；详细范围及历史记录见 [docs/history.md](../docs/history.md)。
 
-- **还需要 FFmpeg 吗？** 0.6.7 播放不需要；Node.js 仍需准备；新版可自动下载并校验汽水签名／授权组件。
+- **需要安装汽水客户端吗？** Windows x64 与 Apple Silicon Mac 都不需要，插件会自动下载、校验并提取必需组件。首次准备需要联网。
+- **还需要 FFmpeg 吗？** 不需要；使用者只需准备对应架构的 Node.js 24+ 和系统网页运行时。旧版本的依赖要求见 [历史记录](../docs/history.md)。
 - **需要换 MyGo 主程序吗？** 登录与播放可直接使用原版 0.1.22；小图标布局、设置动作和 Windows 任务栏组件属于可选增强。
 - **手机已经确认，为什么还要验证？** 是否需要额外验证由汽水决定，请在插件登录窗口中完成官方验证；不要提前关闭窗口。
 - **歌曲显示不可播放怎么办？** 部分歌曲或视频作品可能未向当前账号提供完整音频；插件会明确提示，不把试听当作整首。
