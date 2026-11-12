@@ -1,3 +1,7 @@
+# 0.6.9
+
+移植 Windows 界面增强至官方 MyGo Music 0.1.24（MyGo 0.9.0），保留新版插件设置选项翻译，并按官方发布包校验新增精确 EXE SHA256。安装器和增强 manifest 同步更新至 0.1.24，未知构建仍拒绝覆盖；旧版本补丁保留。
+
 # 历史变更与验证记录
 
 本页保留旧版本说明和当时的验证范围。当前安装方法见 [使用指南](../qishui-account/README.md)，最新版本见 [发布页](https://github.com/yiyiSmallti/mygo-qishui/releases)。

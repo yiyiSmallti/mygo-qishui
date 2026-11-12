@@ -2,11 +2,11 @@
 
 在 MyGo Music 中使用汽水音乐账号，收听喜欢的歌曲、浏览歌单、搜索音乐，并持续播放个性推荐与场景电台。支持 Windows x64 与 macOS Apple Silicon。
 
-当前版本 **0.6.8**，兼容原版 **MyGo Music v0.1.22**。播放保留 AAC-LC／FLAC 原编码，无需安装 FFmpeg。Windows 还提供可选的小图标听歌模式和任务栏播放条，增强助手随插件提供。
+当前版本 **0.6.9**，兼容原版 **MyGo Music v0.1.24**。播放保留 AAC-LC／FLAC 原编码，无需安装 FFmpeg。Windows 还提供可选的小图标听歌模式和任务栏播放条，增强助手随插件提供。
 
 **Windows x64 与 Apple Silicon Mac 均无需安装汽水音乐官方客户端，也无需 FFmpeg。** 所需汽水组件由插件自动下载、校验并提取；首次准备 Windows 约下载 144 MiB，Mac 约下载 18 MiB。仍需安装对应架构的 Node.js 24+。
 
-[下载最新版](https://github.com/yiyiSmallti/mygo-qishui/releases/tag/v0.6.8) · [详细使用指南](qishui-account/README.md) · [历史变更与验证记录](docs/history.md) · [反馈问题](https://github.com/yiyiSmallti/mygo-qishui/issues)
+[下载最新版](https://github.com/yiyiSmallti/mygo-qishui/releases/tag/v0.6.9) · [详细使用指南](qishui-account/README.md) · [历史变更与验证记录](docs/history.md) · [反馈问题](https://github.com/yiyiSmallti/mygo-qishui/issues)
 
 本项目是独立适配，不是 MyGo 或汽水音乐的官方发行版。
 
@@ -20,7 +20,7 @@
 
 ## 快速开始
 
-1. 准备 MyGo Music v0.1.22 和 **Node.js 24 或更新版本**。Windows 还需要 WebView2 Runtime；Mac 使用系统 WebKit。
+1. 准备 MyGo Music v0.1.24 和 **Node.js 24 或更新版本**。Windows 还需要 WebView2 Runtime；Mac 使用系统 WebKit。
 2. 在 MyGo「设置 → 插件 → ＋ → 从 GitHub 安装」输入 `yiyiSmallti/mygo-qishui`。本机安装可从发布页下载对应平台的 `plugin-*.zip`，勿选择源码 ZIP。
 3. 启用汽水音乐插件并允许运行辅助程序，在账号菜单选择汽水音乐登录，用手机汽水 App 扫码确认。
 4. 登录后即可访问音乐库、搜索、推荐和听歌模式。出现官方安全验证时，在插件自带登录窗口继续完成。
@@ -29,7 +29,7 @@
 
 ### 已安装用户如何更新
 
-GitHub 来源插件在 **汽水插件菜单 → 检查更新** 中升级到 0.6.8。本机来源插件下载相应平台 ZIP，从本机升级即可。保留 `plugin-data`，已有账号和有效缓存可继续使用。
+GitHub 来源插件在 **汽水插件菜单 → 检查更新** 中升级到 0.6.9。本机来源插件下载相应平台 ZIP，从本机升级即可。保留 `plugin-data`，已有账号和有效缓存可继续使用。
 
 原版 MyGo 会定期检查 GitHub 来源插件更新，安装更新仍需主动点击。MyGo 自身的应用更新与汽水插件更新是两个入口。
 
@@ -130,6 +130,8 @@ Windows 0.6.7 的当前实机状态来自用户反馈；各轮自动化检查、
 npm test
 ```
 
+0.6.9 已完成 130 项插件回归、增强安装器检查、MyGo 0.1.24 内部回归及 Windows 交叉构建；新版增强尚未进行 Windows 实机安装交互验证。
+
 0.6.8 已通过 8 项 Mac 组件准备检查、8 组私有组件真实播放检查和 2 项 Windows 准备锁回归，正式账号数据未修改。`scripts/verify-mac-sdk.mjs` 可复现自动准备与匿名设备注册检查。
 
 当前有 130 项插件回归测试；0.6.7 另通过 21 项加密样本校验和 8 组完整播放流程检查。`scripts/verify-cenc.mjs` 使用生成音频与独立基准核对解密；`scripts/verify-media-pipeline.mjs` 从插件入口覆盖解码、跳转、缓存、并发、取消与异常清理。FFmpeg 仅是这些验证脚本的工具，不是插件播放依赖。
@@ -142,7 +144,7 @@ MyGo 插件更新只读取 GitHub 最新正式 Release，跳过 Pre-release。�
 
 [MyGo 官方发布说明](https://github.com/egoist/mygo-music#publishing-a-plugin) 使用 GitHub Topic `mygo-music-plugin` 发现公开仓库；[官网插件页](https://cloudmusic.egoist.dev/plugins/) 的结果取决于 GitHub 搜索索引和页面缓存，并不代表官方认证。
 
-构建需要 Go 1.27.3 与 Node.js 24+。先运行 `node scripts/build-login-helper.mjs` 和 `node scripts/build-style-player.mjs <未修改的-MyGo-v0.1.22-源码目录>`，再运行 `go -C login-helper run ./cmd/package -root .. -native ../dist/login-helper -out ../dist`（或 PowerShell 的 `./scripts/package-plugin.ps1`）。输出两个平台专用 ZIP 与 `SHA256SUMS`；Mac ZIP 中保留登录组件的可执行权限。构建与验证方法见 [login-helper](login-helper/README.md)。
+构建需要 Go 1.27.3 与 Node.js 24+。先运行 `node scripts/build-login-helper.mjs` 和 `node scripts/build-style-player.mjs <未修改的-MyGo-v0.1.24-源码目录>`，再运行 `go -C login-helper run ./cmd/package -root .. -native ../dist/login-helper -out ../dist`（或 PowerShell 的 `./scripts/package-plugin.ps1`）。输出两个平台专用 ZIP 与 `SHA256SUMS`；Mac ZIP 中保留登录组件的可执行权限。构建与验证方法见 [login-helper](login-helper/README.md)。
 
 ## 目录
 
@@ -151,14 +153,14 @@ MyGo 插件更新只读取 GitHub 最新正式 Release，跳过 Pre-release。�
 | `qishui-account/` | 可安装的插件源码与界面封面 |
 | `tests/` | 插件模拟回归测试 |
 | `research/` | 三个经过筛选的源码片段和两个对应测试，仅供现有测试使用 |
-| `patches/` | MyGo v0.1.22 与 v0.1.21 的对应增量补丁、构建说明和上游许可证 |
+| `patches/` | MyGo v0.1.24 与 v0.1.21 的对应增量补丁、构建说明和上游许可证 |
 | `scripts/` | 本地测试入口与图标预处理工具 |
 | `docs/screenshots/` | README 使用的实机界面截图 |
 | `docs/history.md` | 历史版本与各轮验证记录 |
 
 ## 来源
 
-- [MyGo Music](https://github.com/egoist/mygo-music/tree/v0.1.22)
+- [MyGo Music](https://github.com/egoist/mygo-music/tree/v0.1.24)
 - [汽水音乐](https://qishui.douyin.com/)
 - [第三方来源与许可说明](THIRD_PARTY_NOTICES.md)
 

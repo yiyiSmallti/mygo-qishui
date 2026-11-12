@@ -1,7 +1,7 @@
 {
   "id": "qishui-account",
   "name": "汽水音乐",
-  "version": "0.6.8",
+  "version": "0.6.9",
   "main": "index.js",
   "playback": "stream",
   "permissions": { "network": ["api.qishui.com"], "process": true },

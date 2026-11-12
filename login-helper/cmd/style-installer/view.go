@@ -52,7 +52,7 @@ func (v *enhancementView) content(c *ui.Context) {
 	case "installed":
 		title, description = "增强组件已就绪", "当前 MyGo 已包含本插件附带的全部增强。"
 	case "unsupported":
-		title, description = "当前 MyGo 暂不支持", "仅支持已核验的 Windows x64 MyGo 0.1.22 构建。未修改程序或账号数据。"
+		title, description = "当前 MyGo 暂不支持", "仅支持已核验的 Windows x64 MyGo 0.1.22 / 0.1.24 构建。未修改程序或账号数据。"
 	case "working":
 		title, description = "正在安装增强", "正在备份、更新并重启 MyGo。完成前请保持此窗口打开。"
 	case "failed":

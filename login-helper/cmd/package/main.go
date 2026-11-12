@@ -123,7 +123,7 @@ func run(root, native, style, out string) error {
 			if !valid {
 				return fmt.Errorf("wrong style installer architecture")
 			}
-			layoutManifest, _ = json.Marshal(map[string]any{"schema": 2, "baseVersion": "0.1.22", "components": []string{"listening-layout", "settings-entry", "taskbar-player"}, "payloadSha256": hex.EncodeToString(playerHash[:]), "sourceSha256": hex.EncodeToString(sourceHash[:])})
+			layoutManifest, _ = json.Marshal(map[string]any{"schema": 2, "baseVersion": "0.1.24", "components": []string{"listening-layout", "settings-entry", "taskbar-player"}, "payloadSha256": hex.EncodeToString(playerHash[:]), "sourceSha256": hex.EncodeToString(sourceHash[:])})
 		}
 		archive := filepath.Join(out, "plugin-"+platform+".zip")
 		file, err := os.Create(archive)

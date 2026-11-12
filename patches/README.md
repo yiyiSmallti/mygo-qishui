@@ -4,10 +4,11 @@
 
 | 上游版本 | 补丁文件 |
 | --- | --- |
-| **v0.1.22（当前适配）** | `mygo-0.1.22-taskbar-player.patch` |
+| **v0.1.24（当前适配）** | `mygo-0.1.24-enhancements.patch` |
+| v0.1.22 | `mygo-0.1.22-taskbar-player.patch` |
 | v0.1.21 | `mygo-0.1.21-taskbar-player.patch` |
 
-当前汽水插件 0.6.8 的登录与播放可直接使用原版 MyGo Music v0.1.22。Windows x64 和 Apple Silicon Mac 均可自动准备汽水组件，无需安装官方客户端或 FFmpeg；本页的可选界面增强仅随 Windows 包提供。当前 Windows 插件包沿用 0.6.6 的增强组件，可按需安装小图标听歌模式、设置页入口和任务栏播放条。
+当前汽水插件 0.6.9 的登录与播放可直接使用原版 MyGo Music v0.1.24。Windows x64 和 Apple Silicon Mac 均可自动准备汽水组件，无需安装官方客户端或 FFmpeg；本页的可选界面增强仅随 Windows 包提供。当前 Windows 插件包使用基于官方 0.1.24 与 MyGo 0.9.0 重建的增强组件，可按需安装小图标听歌模式、设置页入口和任务栏播放条。
 
 ## 通过插件安装增强
 
@@ -15,7 +16,7 @@ Windows 插件包包含增强管理窗口、完整增强主程序及对应源码
 
 安装后使用「设置 → 插件 → 汽水音乐 → 界面增强」，侧栏重复入口自动隐藏。原版 MyGo 暂无设置动作接口，因此首次保留侧栏安装入口；0.6.5 的旧增强程序也需确认升级一次，才能获得任务栏组件和侧栏隐藏规则。任务栏播放条的启用及左右位置在 MyGo 设置中调整，安装窗口只显示“已安装”，不假定其已开启。
 
-`mygo-0.1.22-enhancements.patch` 是完整增强的源码补丁，合入原有任务栏实现、布局、设置页动作和侧栏兼容规则，不含登录改动。旧的 `mygo-0.1.22-layout-only.patch` 可从 v0.6.5 标签获取。构建方式为 `node scripts/build-style-player.mjs /path/to/unmodified-mygo-v0.1.22`，生成的程序和完整对应源码由打包器收录。手动任务栏补丁继续保留，见下文。
+`mygo-0.1.24-enhancements.patch` 是完整增强的源码补丁，合入原有任务栏实现、布局、设置页动作和侧栏兼容规则，不含登录改动。旧的 `mygo-0.1.22-layout-only.patch` 可从 v0.6.5 标签获取。构建方式为 `node scripts/build-style-player.mjs /path/to/unmodified-mygo-v0.1.24`，生成的程序和完整对应源码由打包器收录。手动任务栏补丁继续保留，见下文。
 
 ## 可见变化
 
@@ -34,9 +35,9 @@ Windows 插件包包含增强管理窗口、完整增强主程序及对应源码
 在本仓库目录运行，需 Git、Go 1.27.3，以及 Node.js 24 或更新版本：
 
 ```powershell
-git clone --branch v0.1.22 --depth 1 https://github.com/egoist/mygo-music.git .verification/mygo-music
-git -C .verification/mygo-music apply --check ../../patches/mygo-0.1.22-taskbar-player.patch
-git -C .verification/mygo-music apply ../../patches/mygo-0.1.22-taskbar-player.patch
+git clone --branch v0.1.24 --depth 1 https://github.com/egoist/mygo-music.git .verification/mygo-music
+git -C .verification/mygo-music apply --check ../../patches/mygo-0.1.24-enhancements.patch
+git -C .verification/mygo-music apply ../../patches/mygo-0.1.24-enhancements.patch
 Set-Location .verification/mygo-music
 go test ./internal/...
 go test ./internal/app -run '^TestTaskbar' -count=5
