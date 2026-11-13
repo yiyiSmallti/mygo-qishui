@@ -1658,7 +1658,7 @@ index 0000000..fd4e83e
 +			pl.Prev()
 +		}
 +		play := ui.ButtonBase(c.Key("play")).Size(playWidth, playHeight).Center().Radius(999).
-+			Background(p.text.Alpha(0.08)).TextColor(p.text).Shrink(0).Disabled(!available).
++			Background(ui.Transparent).TextColor(p.text).Shrink(0).Disabled(!available).
 +			Label(T("Play/Pause")).Tooltip(T("Play/Pause"))
 +		if play.Hovered() {
 +			play.Background(p.text.Alpha(0.15))
