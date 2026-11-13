@@ -122,16 +122,22 @@ function sampleTable(b, list, mdats) {
   for (let i = 1; i < sorted.length; i++) check(sorted[i].position >= sorted[i - 1].position + sorted[i - 1].size);
   return samples;
 }
-function sampleTime(b, list, count, header, expectedMs) {
+function sampleTime(b, list, count, header, expectedMs, codec) {
   const table = countTable(b, one(list, 'stts'), 8);
-  let samples = 0, ticks = 0;
+  let samples = 0, ticks = 0, maxDelta = 0;
   for (let i = 0; i < table.count; i++) {
     const p = 8 + i * 8, n = table.data.readUInt32BE(p), delta = table.data.readUInt32BE(p + 4);
     check(n > 0 && delta > 0);
     samples += n; ticks += n * delta;
+    maxDelta = Math.max(maxDelta, delta);
     check(samples <= count && Number.isSafeInteger(ticks));
   }
-  check(samples === count && Math.abs(ticks - header.duration) <= 1);
+  // AAC sample tables can include encoder priming/padding omitted by mdhd.
+  // Accept at most two frames (capped at 100 ms), only in that direction.
+  const padding = codec === 'aac' ? Math.min(2 * maxDelta, header.timescale / 10) : 1;
+  check(samples === count && ticks >= header.duration - 1 && ticks - header.duration <= padding);
+  check(Math.abs(header.duration * 1000 / header.timescale - expectedMs) <= 2000,
+    '汽水音频未达到当前授权的完整时长。');
   const durationMs = ticks * 1000 / header.timescale;
   check(Math.abs(durationMs - expectedMs) <= 2000, '汽水音频未达到当前授权的完整时长。');
   return durationMs;
@@ -261,7 +267,7 @@ function parse(fd, size, { expectedMs, expectedCodec, allowEncrypted = false }) 
   const stbl = one(children(moov, one(mdia, 'minf')), 'stbl'), list = children(moov, stbl);
   const desc = description(moov, one(list, 'stsd'), expectedCodec);
   const samples = sampleTable(moov, list, mdats);
-  const durationMs = sampleTime(moov, list, samples.length, header, expectedMs);
+  const durationMs = sampleTime(moov, list, samples.length, header, expectedMs, desc.codec);
   let remove = [];
   if (desc.protection) {
     if (!allowEncrypted) fail('音频缓存仍处于加密状态，无法直接播放。');
