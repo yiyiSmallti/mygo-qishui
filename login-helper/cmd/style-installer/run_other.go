@@ -4,4 +4,5 @@ package main
 
 import "errors"
 
-func run(uint32, func(string) error) error { return errors.New("unsupported") }
+func run(uint32, func(string) error) error    { return errors.New("unsupported") }
+func checkEnhancement(uint32) (string, error) { return "unsupported", nil }

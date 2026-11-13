@@ -2,11 +2,11 @@
 
 在 MyGo Music 中使用汽水音乐账号，收听喜欢的歌曲、浏览歌单、搜索音乐，并持续播放个性推荐与场景电台。支持 Windows x64 与 macOS Apple Silicon。
 
-当前版本 **0.6.11**，兼容原版 **MyGo Music v0.1.24**。播放保留 AAC-LC／FLAC 原编码，无需安装 FFmpeg。Windows 还提供可选的小图标听歌模式和任务栏播放条，增强助手随插件提供。
+当前版本 **0.6.12**，兼容原版 **MyGo Music v0.1.24**。播放保留 AAC-LC／FLAC 原编码，无需安装 FFmpeg。Windows 还提供可选的小图标听歌模式和任务栏播放条，增强助手随插件提供。
 
 **Windows x64 与 Apple Silicon Mac 均无需安装汽水音乐官方客户端，也无需 FFmpeg。** 所需汽水组件由插件自动下载、校验并提取；首次准备 Windows 约下载 144 MiB，Mac 约下载 18 MiB。仍需安装对应架构的 Node.js 24+。
 
-[下载最新版](https://github.com/yiyiSmallti/mygo-qishui/releases/tag/v0.6.11) · [详细使用指南](qishui-account/README.md) · [历史变更与验证记录](docs/history.md) · [反馈问题](https://github.com/yiyiSmallti/mygo-qishui/issues)
+[下载最新版](https://github.com/yiyiSmallti/mygo-qishui/releases/tag/v0.6.12) · [详细使用指南](qishui-account/README.md) · [历史变更与验证记录](docs/history.md) · [反馈问题](https://github.com/yiyiSmallti/mygo-qishui/issues)
 
 本项目是独立适配，不是 MyGo 或汽水音乐的官方发行版。
 
@@ -29,7 +29,7 @@
 
 ### 已安装用户如何更新
 
-GitHub 来源插件在 **汽水插件菜单 → 检查更新** 中升级到 0.6.11。本机来源插件下载相应平台 ZIP，从本机升级即可。保留 `plugin-data`，已有账号和有效缓存可继续使用。
+GitHub 来源插件在 **汽水插件菜单 → 检查更新** 中升级到 0.6.12。本机来源插件下载相应平台 ZIP，从本机升级即可。保留 `plugin-data`，已有账号和有效缓存可继续使用。
 
 原版 MyGo 会定期检查 GitHub 来源插件更新，安装更新仍需主动点击。MyGo 自身的应用更新与汽水插件更新是两个入口。
 
@@ -130,7 +130,7 @@ Windows 0.6.7 的当前实机状态来自用户反馈；各轮自动化检查、
 npm test
 ```
 
-0.6.11 修复任务栏播放按钮的常驻底色，并支持从 0.6.11 增强版升级。验证范围见发布说明；新版增强尚未进行 Windows 实机安装交互验证。
+0.6.12 修复任务栏播放按钮的常驻底色，并支持从 0.6.12 增强版升级。验证范围见发布说明；新版增强尚未进行 Windows 实机安装交互验证。
 
 0.6.8 已通过 8 项 Mac 组件准备检查、8 组私有组件真实播放检查和 2 项 Windows 准备锁回归，正式账号数据未修改。`scripts/verify-mac-sdk.mjs` 可复现自动准备与匿名设备注册检查。
 

@@ -11,10 +11,37 @@ async function main() {
     input += chunk;
     if (input.length > 1024) throw new Error('input');
   }
-  if (JSON.parse(input).type !== 'open-layout-installer') throw new Error('input');
+  const request = JSON.parse(input).type;
+  if (!['open-layout-installer', 'check-layout-status'].includes(request)) throw new Error('input');
   const root = path.join(__dirname, 'native');
   const executable = path.join(root, 'style-installer.exe');
   if (!fs.statSync(executable).isFile()) throw new Error('payload');
+  if (request === 'check-layout-status') {
+    const child = spawn(executable, ['--check', '--parent', String(process.ppid)], {
+      cwd: root, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true,
+    });
+    try {
+      const result = await new Promise((resolve, reject) => {
+        let output = '';
+        const timer = setTimeout(() => { child.kill(); reject(new Error('timeout')); }, 8000);
+        child.once('error', error => { clearTimeout(timer); reject(error); });
+        child.stdout.on('data', chunk => {
+          output += chunk;
+          if (output.length > 1024) { child.kill(); clearTimeout(timer); reject(new Error('output')); }
+        });
+        child.once('close', code => {
+          clearTimeout(timer);
+          try {
+            const value = JSON.parse(output);
+            if (code !== 0 || value.type !== 'status' || !['installed', 'not-installed', 'update-available', 'unsupported', 'unknown'].includes(value.status)) throw new Error('output');
+            resolve(value);
+          } catch (error) { reject(error); }
+        });
+      });
+      emit(result);
+    } finally { if (child.exitCode === null) child.kill(); }
+    return;
+  }
   let child, timer, handedOff = false, readyShown = false;
   try {
     child = spawn(executable, ['--parent', String(process.ppid)], {

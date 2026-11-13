@@ -1,6 +1,6 @@
 {
   "name": "mygo-qishui",
-  "version": "0.6.11",
+  "version": "0.6.12",
   "private": true,
   "description": "MyGo 汽水音乐插件，支持 Windows x64 与 Apple Silicon Mac，提供音乐库、搜索、推荐与原编码播放；自动准备汽水组件，无需官方客户端或 FFmpeg，附可选 Windows 界面增强。",
   "scripts": {

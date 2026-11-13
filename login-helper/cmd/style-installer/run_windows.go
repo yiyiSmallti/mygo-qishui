@@ -84,6 +84,34 @@ func plainPath(path string) error {
 	}
 }
 
+// checkEnhancement reads the bound player and bundled payload without writes or UI.
+func checkEnhancement(pid uint32) (string, error) {
+	parent, err := openInstance(pid, false)
+	if err != nil {
+		return "", err
+	}
+	defer parent.close()
+	if !strings.EqualFold(filepath.Base(parent.path), "MyGo Music.exe") || plainPath(parent.path) != nil {
+		return "", errors.New("parent")
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	m, err := loadManifest(filepath.Dir(executable))
+	if err != nil {
+		return "", err
+	}
+	hash, err := hashFile(parent.path)
+	if err != nil {
+		return "", err
+	}
+	if !parent.alive() {
+		return "", errors.New("parent exited")
+	}
+	return enhancementStatus(hash, m.PayloadHash), nil
+}
+
 func run(pid uint32, ack func(string) error) error {
 	parent, err := openInstance(pid, false)
 	if err != nil {

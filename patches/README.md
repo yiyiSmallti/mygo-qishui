@@ -8,7 +8,7 @@
 | v0.1.22 | `mygo-0.1.22-taskbar-player.patch` |
 | v0.1.21 | `mygo-0.1.21-taskbar-player.patch` |
 
-当前汽水插件 0.6.11 的登录与播放可直接使用原版 MyGo Music v0.1.24。Windows x64 和 Apple Silicon Mac 均可自动准备汽水组件，无需安装官方客户端或 FFmpeg；本页的可选界面增强仅随 Windows 包提供。当前 Windows 插件包使用基于官方 0.1.24 与 MyGo 0.9.0 重建的增强组件，可按需安装小图标听歌模式、设置页入口和任务栏播放条。
+当前汽水插件 0.6.12 的登录与播放可直接使用原版 MyGo Music v0.1.24。Windows x64 和 Apple Silicon Mac 均可自动准备汽水组件，无需安装官方客户端或 FFmpeg；本页的可选界面增强仅随 Windows 包提供。当前 Windows 插件包使用基于官方 0.1.24 与 MyGo 0.9.0 重建的增强组件，可按需安装小图标听歌模式、设置页入口和任务栏播放条。
 
 ## 通过插件安装增强
 

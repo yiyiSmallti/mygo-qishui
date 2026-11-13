@@ -4,7 +4,7 @@ const ORIGIN = 'https://api.qishui.com';
 const SESSION = 'qishui-session-v1';
 const DIAGNOSTIC = 'qishui-login-diagnostic-v1';
 const DEVICE = 'qishui-device-v1';
-const VERSION = '0.6.11';
+const VERSION = '0.6.12';
 const UA = {
   windows: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   darwin: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -952,11 +952,12 @@ export async function savedAlbums({ offset } = {}) {
 }
 
 export async function home() {
+  const enhancement = enhancementNotice();
   const deadline = musicDeadline();
   const user = await musicBudget(account(), deadline);
   if (!user) return {
     title: '汽水音乐', subtitle: '登录后查看头像、喜欢的音乐与自己的歌单。',
-    sections: [{ title: '账号连接', links: [{ title: '使用说明', subtitle: '在账号菜单登录汽水音乐。', page: 'help' }] }],
+    sections: [...await enhancement, { title: '账号连接', links: [{ title: '使用说明', subtitle: '在账号菜单登录汽水音乐。', page: 'help' }] }],
   };
   const context = musicContext();
   const recommendations = recommendationSections();
@@ -964,7 +965,7 @@ export async function home() {
   const all = musicPlaylistList(own, mixed);
   const favorites = await musicSpecialTracks(context, 1, 0, deadline);
   musicCurrent(context);
-  const sections = [...await musicBudget(recommendations, deadline), { title: '我的汽水音乐', links: [
+  const sections = [...await enhancement, ...await musicBudget(recommendations, deadline), { title: '我的汽水音乐', links: [
     { title: '打开音乐库', subtitle: '歌单、喜欢的歌曲与抖音收藏。', page: 'library' },
     { title: '刷新音乐库', subtitle: '同步手机上刚刚修改的收藏。', page: 'library-refresh', reload: true },
   ] }];
@@ -974,15 +975,45 @@ export async function home() {
   return { title: user.name + '的汽水音乐', subtitle: '来自当前汽水账号的音乐库', sections };
 }
 
-let appearanceSequence = 0;
-function appearancePage(opened = false) {
+let appearanceSequence = 0, enhancementCheck;
+function enhancementStatus() {
+  if (host.platform !== 'windows' || host.arch !== 'amd64') return Promise.resolve('unsupported');
+  if (enhancementCheck) return enhancementCheck;
+  enhancementCheck = (async () => {
+    let child, timer;
+    try {
+      child = spawnHelper('./style-helper.cjs');
+      child.write(JSON.stringify({ type: 'check-layout-status' }) + '\n');
+      child.closeStdin();
+      const line = await Promise.race([child.readLine(), new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('timeout')), 9000);
+      })]);
+      if (typeof line !== 'string' || line.length > 1024) return 'unknown';
+      const value = JSON.parse(line);
+      return value.type === 'status' && ['installed', 'not-installed', 'update-available', 'unsupported'].includes(value.status) ? value.status : 'unknown';
+    } catch { return 'unknown'; }
+    finally {
+      clearTimeout(timer);
+      try { child?.closeStdin(); child?.kill?.(); } catch {}
+    }
+  })();
+  return enhancementCheck;
+}
+async function enhancementNotice() {
+  if (await enhancementStatus() !== 'update-available') return [];
+  return [{ title: '界面增强有更新', links: [{ title: '更新界面增强',
+    subtitle: '插件已更新，当前增强程序仍是旧版。点击后确认更新并重启 MyGo，新界面修复才会生效。',
+    page: 'appearance/open/update', reload: true }] }];
+}
+function appearancePage(opened = false, status = 'unknown') {
   const supported = host.platform === 'windows' && host.arch === 'amd64';
   const next = Date.now().toString(36) + '-' + (++appearanceSequence).toString(36);
   return {
     title: '界面增强',
-    description: supported
+    description: (status === 'update-available' ? '界面增强有更新：插件已更新，增强程序仍是旧版。请打开增强管理确认更新。\n'
+      : status === 'installed' ? '界面增强已是当前插件提供的版本。\n' : '') + (supported
       ? (opened ? '增强管理窗口已打开。请在窗口中查看组件状态；只有确认安装才会关闭并重启 MyGo。' : '增强包已随插件提供，包含听歌模式、插件设置页入口和任务栏播放条。') + '\n支持官方 Windows x64 MyGo 0.1.22 / 0.1.24 与已验证的旧增强构建。安装后请在“设置 → 插件 → 汽水音乐”中使用“界面增强”，侧栏重复入口会隐藏；原版首次仍从此处启用。安装前请保存设置并暂停播放，原程序和已保存的数据会备份，账号与插件保留。'
-      : '此样式安装助手目前仅支持 Windows x64。Mac 可继续使用汽水插件；此处不会修改播放器。',
+      : '此样式安装助手目前仅支持 Windows x64。Mac 可继续使用汽水插件；此处不会修改播放器。'),
     sections: supported ? [{ links: [{ title: opened ? '再次打开增强管理' : '打开增强管理', subtitle: '检查版本、确认安装或查看已安装状态。', page: 'appearance/open/' + next, reload: true }] }] : [],
   };
 }
@@ -1002,6 +1033,7 @@ async function openAppearanceInstaller() {
     try { value = JSON.parse(line); } catch { throw failure('增强管理窗口没有返回有效结果，请重新安装 Windows 插件包。', 'setup'); }
     if (value.type !== 'ready' || !['ready', 'busy'].includes(value.status)) throw failure('增强管理窗口未能启动，请重新安装完整的 Windows 插件包。', 'setup');
     complete = true;
+    enhancementCheck = undefined;
     return appearancePage(true);
   } finally {
     clearTimeout(timer);
@@ -1011,9 +1043,10 @@ async function openAppearanceInstaller() {
 }
 
 export async function browse({ page } = {}) {
-  if (page === 'appearance') return appearancePage();
+  if (page === 'appearance') { enhancementCheck = undefined; return appearancePage(false, await enhancementStatus()); }
   if (/^appearance\/open\/[0-9a-z-]{1,80}$/.test(page || '')) return openAppearanceInstaller();
   if (page === 'listening') {
+    const enhancement = enhancementNotice();
     const context = musicContext(), catalog = await recommendationService.catalog();
     musicCurrent(context);
     const allModes = [...catalog.primary, ...catalog.scenes];
@@ -1022,7 +1055,7 @@ export async function browse({ page } = {}) {
     const common = commonIds.map(id => byId.get(id)).filter(Boolean);
     const commonSet = new Set(common.map(station => station.id));
     const modeButton = station => ({ ...station, iconUrl: stationArtwork(station.id, true) });
-    const sections = [];
+    const sections = [...await enhancement];
     if (common.length) sections.push({ title: '常用模式', layout: 'mode-buttons', stations: common.map(modeButton) });
     if (catalog.radios.length) sections.push({ title: '探索更多新模式', layout: 'mode-covers', stations: catalog.radios });
     // Do not discard less common or newly returned modes when arranging
