@@ -20,9 +20,10 @@ const officialHash = "9c27f0e54214de217624099a18945d07718e90fa48a3396e9c47505a8d
 const previousVerifiedHash = "60208d6d3e647e8f8e8c1e1157657402032e9ce09553e0319a0a40823809284a"
 const previousLayoutHash = "39f1383d6858cfaeeb305b722ed8529d364463495468b9c87d7cf209aef6ce28"
 const previousSettingsHash = "6c916f49427988b5e5c368081f358c1914ea59692a588ea9bea5738c5a973096"
+const previousEnhanced124Hash = "1d24335b1d82cf9027aac25c07d1b1c98b5fef273c28857f953079c8bff3939d"
 
 func supportedHash(hash string) bool {
-	return hash == officialHash || hash == previousOfficialHash || hash == previousVerifiedHash || hash == previousLayoutHash || hash == previousSettingsHash
+	return hash == officialHash || hash == previousOfficialHash || hash == previousVerifiedHash || hash == previousLayoutHash || hash == previousSettingsHash || hash == previousEnhanced124Hash
 }
 
 type manifest struct {
