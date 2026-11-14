@@ -19,6 +19,7 @@ func TestEnhancementStatus(t *testing.T) {
 		{previousOfficialHash, "not-installed"},
 		{previousEnhanced124Hash, "update-available"},
 		{previousEnhanced0610Hash, "update-available"},
+		{enhanced0613Hash, "update-available"},
 		{previousSettingsHash, "update-available"},
 		{"unverified-build", "unsupported"},
 	} {

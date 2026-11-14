@@ -13,11 +13,14 @@ const API_ORIGIN = 'https://api.qishui.com';
 const TRACK_PATH = '/luna/pc/track_v2';
 let signerState;
 
-function fail(message, code, statusCode) {
+const NETWORK_DIAGNOSTIC_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'ECONNREFUSED', 'EAI_AGAIN',
+  'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_SOCKET', 'ABORT_ERR']);
+function fail(message, code, statusCode, networkCode) {
   const error = new Error(message);
   error.code = code;
   error.safeMediaError = true;
   if (Number.isFinite(statusCode)) error.statusCode = statusCode;
+  if (NETWORK_DIAGNOSTIC_CODES.has(networkCode)) error.networkCode = networkCode;
   throw error;
 }
 
@@ -189,7 +192,7 @@ async function requestMetadata({ route, params = {}, payload, label, device, jar
     if (controller.signal.aborted) fail('获取汽水' + label + '超时，请稍后重试。', 'timeout');
     if (error?.safeMediaError === true) throw error;
     // Never propagate a native/network error containing signed request details.
-    fail('无法连接汽水音乐接口，请检查网络后重试。', 'network');
+    fail('无法连接汽水音乐接口，请检查网络后重试。', 'network', undefined, error?.cause?.code || error?.code);
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', cancel);

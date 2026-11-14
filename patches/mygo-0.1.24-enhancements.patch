@@ -1541,7 +1541,7 @@ index 0000000..faa3157
 +}
 diff --git a/internal/app/taskbar_widget_view_windows.go b/internal/app/taskbar_widget_view_windows.go
 new file mode 100644
-index 0000000..fd4e83e
+index 0000000..0717c88
 --- /dev/null
 +++ b/internal/app/taskbar_widget_view_windows.go
 @@ -0,0 +1,230 @@
@@ -3242,6 +3242,117 @@ index e5e6051..35a2815 100644
  	// Navigation is the sidebar while the source is active, in this order. With
  	// none, the sidebar has an entry for each of the app's pages the source can do.
  	Navigation []NavItem `json:"navigation,omitempty"`
+diff --git a/internal/player/playback_error_test.go b/internal/player/playback_error_test.go
+new file mode 100644
+index 0000000..b6a3386
+--- /dev/null
++++ b/internal/player/playback_error_test.go
+@@ -0,0 +1,60 @@
++package player
++
++import (
++	"errors"
++	"mygo-music/internal/music"
++	"testing"
++	"time"
++)
++
++type playbackReport struct {
++	track         music.Track
++	quality, code string
++}
++type reportingSource struct {
++	picky
++	reports chan playbackReport
++}
++
++func (s reportingSource) PlaybackError(t music.Track, quality, code string) {
++	s.reports <- playbackReport{t, quality, code}
++}
++
++func TestSkippedTrackPreservesDiagnosticWithoutChangingSkip(t *testing.T) {
++	p, ch, q := pickyQueue()
++	defer p.stop()
++	reports := make(chan playbackReport, 4)
++	src := reportingSource{picky{ok: map[string]bool{"a": true, "c": true}}, reports}
++	p.Source = func(string) music.Source { return src }
++	p.Quality = func() string { return "high" }
++	p.PlayTrack(q, 0)
++	settle(t, ch, p)
++	p.Next()
++	settle(t, ch, p)
++	if p.Current().ID != "c" {
++		t.Fatal("failed track did not auto-skip")
++	}
++	select {
++	case got := <-reports:
++		if got.track.ID != "b" || got.quality != "high" || got.code != "unavailable" {
++			t.Fatalf("unexpected report: %+v", got)
++		}
++	case <-time.After(time.Second):
++		t.Fatal("no diagnostic was reported")
++	}
++}
++
++func TestPlaybackDiagnosticNeverReceivesRawError(t *testing.T) {
++	p := &Player{queue: []music.Track{{ID: "broken", Source: "s"}}, order: []int{0}}
++	reports := make(chan playbackReport, 1)
++	p.Source = func(string) music.Source { return reportingSource{reports: reports} }
++	p.loadFailed("s", errors.New("https://private.invalid/?token=secret"), 0, 0, stay)
++	select {
++	case got := <-reports:
++		if got.code != "unknown" {
++			t.Fatalf("unsafe error code %q", got.code)
++		}
++	case <-time.After(time.Second):
++		t.Fatal("no diagnostic")
++	}
++}
+diff --git a/internal/player/player.go b/internal/player/player.go
+index bdfd086..bb3315e 100644
+--- a/internal/player/player.go
++++ b/internal/player/player.go
+@@ -64,7 +64,7 @@ type Player struct {
+ 	track   *music.Track
+ 	out     *audio.Player
+ 	stream  stream
+-	watch   *watched // stream, as out plays it
++	watch   *watched      // stream, as out plays it
+ 	info    *music.Stream // what the current track streams
+ 	fade    fader
+ 	gain    float64 // the current track's normalizing gain
+@@ -779,6 +779,31 @@ func (p *Player) loadLyrics(gen int, src music.Source, t music.Track) {
+ // dir goes, unless it stays, nothing in the queue can play, or the listener has
+ // to do something first, which would stop the next track too.
+ func (p *Player) loadFailed(source string, err error, at, skipped, dir int) {
++	// Let interested sources preserve a bounded diagnostic before auto-skip.
++	// Pass only track metadata and a fixed code, never URLs or raw errors.
++	if at >= 0 && at < len(p.order) {
++		t := p.queue[p.order[at]]
++		if reporter, ok := p.sourceOf(&t).(interface {
++			PlaybackError(music.Track, string, string)
++		}); ok {
++			quality := "standard"
++			if p.Quality != nil {
++				quality = p.Quality()
++			}
++			code := "unknown"
++			switch {
++			case errors.Is(err, music.ErrUnavailable):
++				code = "unavailable"
++			case errors.Is(err, music.ErrUnsupported):
++				code = "unsupported"
++			case errors.Is(err, music.ErrSignIn):
++				code = "signIn"
++			case errors.Is(err, music.ErrSetup):
++				code = "setup"
++			}
++			go reporter.PlaybackError(t, quality, code)
++		}
++	}
+ 	p.err = errorText(err)
+ 	if errors.Is(err, music.ErrSignIn) || errors.Is(err, music.ErrSetup) {
+ 		p.playing = false
 diff --git a/internal/player/player_test.go b/internal/player/player_test.go
 index 95da0f7..0a3a7ae 100644
 --- a/internal/player/player_test.go
@@ -3257,6 +3368,45 @@ index 95da0f7..0a3a7ae 100644
  }
  
  // pickyQueue is a, b and c, of which b can't play.
+diff --git a/internal/plugin/playback_error_test.go b/internal/plugin/playback_error_test.go
+new file mode 100644
+index 0000000..dbd2df9
+--- /dev/null
++++ b/internal/plugin/playback_error_test.go
+@@ -0,0 +1,33 @@
++package plugin
++
++import (
++	"encoding/json"
++	"mygo-music/internal/music"
++	"strings"
++	"testing"
++)
++
++func TestPlaybackErrorOnlySendsPublicDiagnosticFields(t *testing.T) {
++	p := load(t, plain, `export function playbackError(event) { host.storage.set('received', event); }
++export function diagnostic() { return host.storage.get('received'); }`)
++	p.PlaybackError(music.Track{ID: "123", Name: "Song", URL: "https://private.invalid/?token=secret", Artists: []music.Artist{{Name: "Artist"}}}, "high", "unsupported")
++	var got map[string]string
++	if err := p.call("diagnostic", nil, &got); err != nil {
++		t.Fatal(err)
++	}
++	if len(got) != 5 || got["id"] != "123" || got["name"] != "Song" || got["artists"] != "Artist" || got["quality"] != "high" || got["code"] != "unsupported" {
++		t.Fatalf("unexpected event: %+v", got)
++	}
++	data, _ := json.Marshal(got)
++	if strings.Contains(string(data), "secret") || strings.Contains(string(data), "private.invalid") {
++		t.Fatal("private stream metadata reached callback")
++	}
++}
++
++func TestPlaybackErrorIsOptional(t *testing.T) {
++	p := load(t, plain, `export function account() { return null; }`)
++	p.PlaybackError(music.Track{ID: "123"}, "standard", "unknown")
++	if _, err := p.Account(); err != nil {
++		t.Fatal(err)
++	}
++}
 diff --git a/internal/plugin/plugin.go b/internal/plugin/plugin.go
 index 38975cd..ce6df5c 100644
 --- a/internal/plugin/plugin.go
@@ -3272,3 +3422,23 @@ index 38975cd..ce6df5c 100644
  	info.Navigation = slices.Clone(info.Navigation)
  	for i, n := range info.Navigation {
  		info.Navigation[i].Title = p.t(n.Title)
+diff --git a/internal/plugin/source.go b/internal/plugin/source.go
+index fd9cc2c..efd6c51 100644
+--- a/internal/plugin/source.go
++++ b/internal/plugin/source.go
+@@ -280,6 +280,15 @@ func (p *Plugin) Lyrics(id string) (*music.Lyrics, error) {
+ 	return &l, nil
+ }
+ 
++// PlaybackError is optional and never carries raw transport errors or URLs.
++func (p *Plugin) PlaybackError(t music.Track, quality, code string) {
++	if p.Can("playbackError") {
++		_ = p.call("playbackError", map[string]string{
++			"id": t.ID, "name": t.Name, "artists": t.ArtistNames(), "quality": quality, "code": code,
++		}, nil)
++	}
++}
++
+ func (p *Plugin) Stream(id, quality string) (*music.Stream, error) {
+ 	var s music.Stream
+ 	if err := p.call("stream", map[string]string{"id": id, "quality": quality}, &s); err != nil {

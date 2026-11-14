@@ -1,7 +1,7 @@
 {
   "id": "qishui-account",
   "name": "汽水音乐",
-  "version": "0.6.12",
+  "version": "0.6.13",
   "main": "index.js",
   "playback": "stream",
   "permissions": { "network": ["api.qishui.com"], "process": true },
@@ -9,6 +9,7 @@
     { "key": "nodePath", "label": "Node.js 路径", "help": "可选。填写 node.exe 或 node 的完整路径，无需加引号；留空自动查找。需要 Node.js 24 或更新版本。" }
   ],
   "settingsActions": [
+    { "title": "播放诊断", "subtitle": "自动保留最近 50 条播放失败记录，便于排查跳歌。", "page": "playback-diagnostics" },
     { "title": "界面增强", "subtitle": "管理听歌模式和任务栏播放条；安装或更新前会另行确认。", "page": "appearance/open/settings" }
   ],
   "navigation": [

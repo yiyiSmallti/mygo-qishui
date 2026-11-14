@@ -17,6 +17,7 @@ let CACHE = '';
 const controller = new AbortController();
 const temporary = [];
 let stage = 'metadata';
+let lastHttpStatus;
 const timer = setTimeout(() => controller.abort(), 26000);
 function fail(message, code = 'unavailable') { const e = new Error(message); e.code = code; e.safeMediaError = true; throw e; }
 function allowedAudio(value) {
@@ -43,6 +44,7 @@ function cacheFile(name) {
 }
 async function download(url, target) {
   const response = await fetch(url, { redirect: 'error', signal: controller.signal });
+  lastHttpStatus = response.status;
   if (!response.ok || !response.body) fail('汽水音频暂时无法读取，请稍后重试。');
   const limit = 120 * 1024 * 1024;
   if (Number(response.headers.get('content-length')) > limit) { await response.body.cancel(); fail('这首歌文件较大，请选择较低音质重试。'); }
@@ -278,10 +280,15 @@ input.once('line', async line => {
   }
   catch (error) {
     const stageNames = { metadata: '读取播放信息', download: '读取音频', decrypt: '解密音频', cache: '写入音频缓存' };
-    const networkCode = error?.cause?.code || error?.code;
+    const networkCode = error?.networkCode || error?.cause?.code || error?.code;
     const hint = typeof networkCode === 'string' && /^[A-Z0-9_]{1,40}$/.test(networkCode) ? '（' + networkCode + '）' : '';
     result = { ok: false, code: error.safeMediaError ? error.code : 'unavailable',
-      message: error.safeMediaError ? error.message : (stageNames[stage] || '播放音乐') + '失败' + hint + '，请稍后重试。' };
+      message: error.safeMediaError ? error.message : (stageNames[stage] || '播放音乐') + '失败' + hint + '，请稍后重试。',
+      diagnostic: { stage, networkCode,
+        ...(Number.isInteger(error.statusCode) && error.statusCode >= 0 && error.statusCode <= 10000000 ? { serviceStatus: error.statusCode } : {}),
+        ...(Number.isInteger(lastHttpStatus) ? { httpStatus: lastHttpStatus } : {}),
+        ...(error.safeMediaError && typeof error.stack === 'string' ? { parserLine: Number(error.stack.match(/mp4-cenc\.cjs:(\d+):\d+/g)?.[2]?.split(':')[1]) || undefined } : {}),
+      } };
   } finally {
     clearTimeout(timer);
     for (const file of temporary) { try { fs.unlinkSync(file); } catch {} }

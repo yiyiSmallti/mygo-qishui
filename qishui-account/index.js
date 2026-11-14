@@ -4,7 +4,8 @@ const ORIGIN = 'https://api.qishui.com';
 const SESSION = 'qishui-session-v1';
 const DIAGNOSTIC = 'qishui-login-diagnostic-v1';
 const DEVICE = 'qishui-device-v1';
-const VERSION = '0.6.12';
+const PLAYBACK_ERRORS = 'qishui-playback-errors-v1';
+const VERSION = '0.6.13';
 const UA = {
   windows: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   darwin: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -368,7 +369,9 @@ function requestMedia(operation, params) {
       if (!message || message.ok !== true) {
         if (message && message.code === 'signIn') { host.storage.remove(SESSION); clearMusicCache(); }
         const code = message && ['signIn', 'setup', 'unavailable', 'unsupported'].includes(message.code) ? message.code : 'unavailable';
-        throw failure(message && typeof message.message === 'string' ? message.message.slice(0, 220) : '这首歌暂时无法播放。', code);
+        const error = failure(message && typeof message.message === 'string' ? message.message.slice(0, 220) : '这首歌暂时无法播放。', code);
+        error.playbackDiagnostic = message && message.diagnostic;
+        throw error;
       }
       return message.value;
     } finally {
@@ -409,15 +412,98 @@ function mediaCacheURLPath() {
 }
 
 export async function stream({ id, quality = 'standard' } = {}) {
-  const result = await requestMedia('stream', { ...playbackIdentity(id), quality });
-  let url, path;
-  try { url = new URL(result && result.url); path = decodeURIComponent(url.pathname); }
-  catch (_) { throw failure('音乐组件未返回有效音频。', 'unavailable'); }
-  const cache = mediaCacheURLPath();
-  if (url.protocol !== 'file:' || url.hostname || url.search || url.hash || !['m4a', 'flac'].includes(result.type) || !cache ||
-    !path.startsWith(cache) || !new RegExp('^[a-f0-9]{64}\\.' + result.type + '$').test(path.slice(cache.length)))
-    throw failure('音频缓存来源不符合预期。', 'unavailable');
-  return result;
+  const started = Date.now();
+  try {
+    const result = await requestMedia('stream', { ...playbackIdentity(id), quality });
+    let url, path;
+    try { url = new URL(result && result.url); path = decodeURIComponent(url.pathname); }
+    catch (_) { throw failure('音乐组件未返回有效音频。', 'unavailable'); }
+    const cache = mediaCacheURLPath();
+    if (url.protocol !== 'file:' || url.hostname || url.search || url.hash || !['m4a', 'flac'].includes(result.type) || !cache ||
+      !path.startsWith(cache) || !new RegExp('^[a-f0-9]{64}\\.' + result.type + '$').test(path.slice(cache.length)))
+      throw failure('音频缓存来源不符合预期。', 'unavailable');
+    return result;
+  } catch (error) {
+    recordPlaybackError({ id, quality, code: error.code, reason: playbackReason(error.message),
+      diagnostic: error.playbackDiagnostic, elapsedMs: Date.now() - started });
+    throw error;
+  }
+}
+
+// Only selected public metadata and fixed diagnostic fields are persisted.
+// Never save an Error object, raw message, URL, headers or helper input.
+const PLAYBACK_NETWORK_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'ECONNREFUSED', 'EAI_AGAIN',
+  'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_SOCKET', 'ABORT_ERR', 'ENOENT', 'EACCES', 'ENOSPC', 'EPERM', 'EIO']);
+function playbackReason(message) {
+  const text = typeof message === 'string' ? message : '';
+  for (const [pattern, reason] of [
+    [/超时/, '请求超时'], [/完整音频|试听|授权的完整时长|时长不足/, '未获得完整歌曲或时长不符'],
+    [/音频文件不完整|结构无效|缓存校验/, '音频结构或缓存校验失败'],
+    [/编码|封装/, '音频编码或封装不受支持'], [/播放授权|加密|解密/, '音频授权或解密失败'],
+    [/缓存|磁盘/, '音频缓存处理失败'], [/登录|账号|暂未允许播放/, '账号连接或播放权限问题'],
+    [/无法连接|接口暂时不可用/, '网络或服务请求失败'],
+    [/Node.js|组件|启动/, '播放组件启动或通信失败'], [/视频作品/, '不支持的视频作品'],
+    [/歌曲标识/, '歌曲标识无效'], [/音频暂时无法读取/, '音频下载失败'],
+  ]) if (pattern.test(text)) return reason;
+  return '获取或加载音频失败';
+}
+function diagnosticText(value, limit = 120) {
+  return typeof value === 'string' ? value.replace(/https?:\/\/\S+/gi, '[地址已隐藏]')
+    .replace(/(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)/g, '[凭据已隐藏]')
+    .replace(/\b(?:cookie|authorization|token|spade|sessionid|key)\s*[:=].*/gi, '[凭据已隐藏]')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, limit) : '';
+}
+function playbackEntries() {
+  try {
+    const saved = host.storage.get(PLAYBACK_ERRORS);
+    return Array.isArray(saved) ? saved.filter(e => e && e.schema === 1 && typeof e.time === 'string').slice(-50) : [];
+  } catch { return []; }
+}
+function recordPlaybackError({ id, name, artists, quality, code, reason, diagnostic, elapsedMs, skipped = false } = {}) {
+  try {
+    const entries = playbackEntries(), now = Date.now();
+    const trackId = typeof id === 'string' && /^(?:(?:ugc_clip|ugc_video):)?\d{1,32}$/.test(id) ? id : '';
+    const requestedQuality = ['standard', 'high', 'lossless'].includes(quality) ? quality : 'unknown';
+    // The player callback enriches the acquisition record rather than duplicating it.
+    const recent = skipped && entries.slice().reverse().find(e => e.id === trackId && e.quality === requestedQuality && now - Date.parse(e.time) < 10000 && !e.skipped);
+    if (recent) {
+      recent.name = diagnosticText(name); recent.artists = diagnosticText(artists); recent.skipped = true;
+    } else {
+      const detail = diagnostic && typeof diagnostic === 'object' ? diagnostic : {};
+      const stage = ['metadata', 'download', 'decrypt', 'cache', 'request', 'player'].includes(detail.stage) ? detail.stage : skipped ? 'player' : 'request';
+      entries.push({ schema: 1, time: new Date(now).toISOString(), version: VERSION, id: trackId,
+        name: diagnosticText(name), artists: diagnosticText(artists), quality: requestedQuality,
+        code: ['unavailable', 'unsupported', 'signIn', 'setup'].includes(code) ? code : 'unknown',
+        reason: ['请求超时', '未获得完整歌曲或时长不符', '音频结构或缓存校验失败', '音频编码或封装不受支持',
+          '音频授权或解密失败', '音频缓存处理失败', '账号连接或播放权限问题', '播放组件启动或通信失败',
+          '不支持的视频作品', '歌曲标识无效', '音频下载失败', '播放器加载或解码音频失败', '网络或服务请求失败'].includes(reason) ? reason : '获取或加载音频失败',
+        stage, skipped: Boolean(skipped),
+        elapsedMs: Number.isFinite(elapsedMs) ? Math.max(0, Math.min(900000, Math.round(elapsedMs))) : 0,
+        ...(PLAYBACK_NETWORK_CODES.has(detail.networkCode) ? { networkCode: detail.networkCode } : {}),
+        ...(Number.isInteger(detail.httpStatus) && detail.httpStatus >= 100 && detail.httpStatus <= 599 ? { httpStatus: detail.httpStatus } : {}),
+        ...(Number.isInteger(detail.serviceStatus) && detail.serviceStatus >= 0 && detail.serviceStatus <= 10000000 ? { serviceStatus: detail.serviceStatus } : {}),
+        ...(Number.isInteger(detail.parserLine) && detail.parserLine > 0 && detail.parserLine < 10000 ? { parserLine: detail.parserLine } : {}),
+      });
+    }
+    host.storage.set(PLAYBACK_ERRORS, entries.slice(-50));
+  } catch { /* Logging must never change playback or hide the original error. */ }
+}
+export function playbackError({ id, name, artists, quality, code } = {}) {
+  recordPlaybackError({ id, name, artists, quality, code, reason: '播放器加载或解码音频失败', skipped: true });
+}
+function playbackDiagnosticsPage() {
+  const entries = playbackEntries();
+  const lines = entries.slice().reverse().map(e => [diagnosticText(e.time, 30),
+    diagnosticText(e.name) || '歌曲 ' + diagnosticText(e.id, 48), diagnosticText(e.artists),
+    '音质：' + diagnosticText(e.quality, 16), diagnosticText(e.reason),
+    '阶段：' + diagnosticText(e.stage, 16), e.skipped ? '播放器确认加载失败' : '获取音频失败（可能来自预加载）',
+    e.networkCode && diagnosticText(e.networkCode, 40), e.httpStatus && 'HTTP ' + Number(e.httpStatus),
+    e.serviceStatus && '服务状态码：' + Number(e.serviceStatus),
+    e.parserLine && '音频解析位置：' + Number(e.parserLine)].filter(Boolean).join(' · '));
+  return { title: '播放诊断', description: '自动保留最近 50 条失败记录，更新和重启后仍保留。仅保存在本机，不自动发送。\n\n'
+    + (lines.length ? lines.join('\n\n') : '暂无播放失败记录。'),
+    sections: [{ links: [{ title: '刷新记录', page: 'playback-diagnostics', reload: true },
+      { title: '清空播放诊断记录', page: 'playback-diagnostics/clear', reload: true }] }] };
 }
 
 export async function lyrics({ id } = {}) {
@@ -1043,6 +1129,8 @@ async function openAppearanceInstaller() {
 }
 
 export async function browse({ page } = {}) {
+  if (page === 'playback-diagnostics/clear') { host.storage.remove(PLAYBACK_ERRORS); return playbackDiagnosticsPage(); }
+  if (page === 'playback-diagnostics') return playbackDiagnosticsPage();
   if (page === 'appearance') { enhancementCheck = undefined; return appearancePage(false, await enhancementStatus()); }
   if (/^appearance\/open\/[0-9a-z-]{1,80}$/.test(page || '')) return openAppearanceInstaller();
   if (page === 'listening') {
