@@ -260,18 +260,26 @@ function parse(fd, size, { expectedMs, expectedCodec, allowEncrypted = false }) 
   const root = children(moov, one(boxes(moov), 'moov'));
   if (root.some(x => x.type === 'mvex')) unsupported();
   const tracks = root.filter(x => x.type === 'trak');
-  if (tracks.length !== 1) unsupported();
-  const mdia = children(moov, one(children(moov, tracks[0]), 'mdia'));
+  const typed = tracks.map(track => {
+    const mdia = children(moov, one(children(moov, track), 'mdia'));
+    return { track, mdia, kind: body(moov, one(mdia, 'hdlr'), 12).toString('ascii', 8, 12) };
+  });
+  const audio = typed.filter(t => t.kind === 'soun');
+  // Authorized music may carry an auxiliary timed-text track. Retain the
+  // unique audio track; discard only text metadata without moving samples.
+  if (audio.length !== 1 || typed.some(t => !['soun', 'text'].includes(t.kind))) unsupported();
+  const ignored = typed.filter(t => t.kind === 'text').map(t => t.track);
+  const mdia = audio[0].mdia;
   check(body(moov, one(mdia, 'hdlr'), 12).toString('ascii', 8, 12) === 'soun');
   const header = mediaHeader(moov, one(mdia, 'mdhd'));
   const stbl = one(children(moov, one(mdia, 'minf')), 'stbl'), list = children(moov, stbl);
   const desc = description(moov, one(list, 'stsd'), expectedCodec);
   const samples = sampleTable(moov, list, mdats);
   const durationMs = sampleTime(moov, list, samples.length, header, expectedMs, desc.codec);
-  let remove = [];
+  let remove = ignored;
   if (desc.protection) {
     if (!allowEncrypted) fail('音频缓存仍处于加密状态，无法直接播放。');
-    remove = [desc.protection.sinf, ...encryption(moov, list, samples, desc.protection.ivSize),
+    remove = [...ignored, desc.protection.sinf, ...encryption(moov, list, samples, desc.protection.ivSize),
       ...root.filter(x => x.type === 'pssh')];
   } else if (list.some(x => ['senc', 'saiz', 'saio'].includes(x.type))) unsupported();
   return { moov, position, samples, desc, remove, removeTop,
@@ -296,24 +304,26 @@ async function decryptFile(file, options) {
   const { fd, size } = open(file, 'r+');
   try {
     const media = parse(fd, size, { ...options, allowEncrypted: true });
-    if (!media.info.encrypted) return media.info;
-    check(Buffer.isBuffer(options.key) && options.key.length === 16, '这首歌缺少有效的播放解密授权。');
-    // Validate every table and subsample before changing a byte. The caller
-    // owns this private .part file and publishes it only after success.
-    for (let i = 0; i < media.samples.length; i++) {
-      if (i % 64 === 0) { await yieldIO(); cancelled(options.signal); }
-      const sample = media.samples[i], iv = Buffer.alloc(16);
-      sample.iv.copy(iv);
-      const decipher = createDecipheriv('aes-128-ctr', options.key, iv);
-      const packet = readAt(fd, sample.size, sample.position);
-      for (const span of sample.spans) {
-        if (span.size) decipher.update(packet.subarray(span.start, span.start + span.size)).copy(packet, span.start);
+    if (!media.info.encrypted && !media.remove.length) return media.info;
+    if (media.info.encrypted) {
+      check(Buffer.isBuffer(options.key) && options.key.length === 16, '这首歌缺少有效的播放解密授权。');
+      // Validate every audio table and subsample before changing a byte. The caller
+      // owns this private .part file and publishes it only after success.
+      for (let i = 0; i < media.samples.length; i++) {
+        if (i % 64 === 0) { await yieldIO(); cancelled(options.signal); }
+        const sample = media.samples[i], iv = Buffer.alloc(16);
+        sample.iv.copy(iv);
+        const decipher = createDecipheriv('aes-128-ctr', options.key, iv);
+        const packet = readAt(fd, sample.size, sample.position);
+        for (const span of sample.spans) {
+          if (span.size) decipher.update(packet.subarray(span.start, span.start + span.size)).copy(packet, span.start);
+        }
+        check(decipher.final().length === 0);
+        writeAt(fd, packet, sample.position);
       }
-      check(decipher.final().length === 0);
-      writeAt(fd, packet, sample.position);
+      cancelled(options.signal);
+      media.moov.write(media.desc.format, media.desc.entry.start + 4, 4, 'ascii');
     }
-    cancelled(options.signal);
-    media.moov.write(media.desc.format, media.desc.entry.start + 4, 4, 'ascii');
     // Padding boxes retain byte lengths, so all original chunk/seek offsets
     // stay valid. Clear the discarded authorization metadata in those boxes.
     for (const box of media.remove) {
