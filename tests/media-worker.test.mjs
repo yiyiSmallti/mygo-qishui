@@ -139,18 +139,35 @@ test('gateway discards native stdout and validates private result envelopes', as
   input.end(); worker.stdout.end(); worker.stdin.end();
 });
 
-test('signed requests reject nested status_info errors including expired sessions', async () => {
+test('signed requests reject nested status_info errors including expired sessions', async t => {
+  // Exercise the real ASAR version parser and request signer wiring using
+  // isolated metadata and a fake addon, never a locally installed SDK.
+  const root = fixture(t), asar = path.join(root, 'app.asar');
+  const metadata = Buffer.from(JSON.stringify({ name: 'SodaMusic', version: '3.7.0' }));
+  const json = Buffer.from(JSON.stringify({ files: { 'package.json': { size: metadata.length, offset: '0' } } }));
+  const header = Buffer.alloc(8 + Math.ceil(json.length / 4) * 4);
+  header.writeUInt32LE(header.length - 4, 0); header.writeUInt32LE(json.length, 4); json.copy(header, 8);
+  const prefix = Buffer.alloc(8); prefix.writeUInt32LE(4, 0); prefix.writeUInt32LE(header.length, 4);
+  fs.writeFileSync(asar, Buffer.concat([prefix, header, metadata]));
+  const soda = { asar, unpacked: root };
   const device = { aid: 386088, did: '123456789012345', iid: '987654321012345', identityType: 'fresh-plugin-pseudonymous', channel: 'mygo' };
   const jar = { 'sessionid|/': { name: 'sessionid', value: 'test-only', path: '/', expires: 0 } };
   let responseData = { status_code: 0, status_info: { code: 1000016 } }, requestBody;
+  let requests = 0, signatures = 0, initialized = 0;
   const context = vm.createContext({
     Buffer, URL, AbortController, setTimeout, clearTimeout, Intl, module: { exports: {} },
     fetch: async (url, options) => {
+      requests++;
+      assert.equal(new URL(url).origin, 'https://api.qishui.com');
+      assert.equal(options.headers['user-agent'], 'LunaPC/3.7.0');
+      assert.equal(options.headers['x-test'], 'test');
       requestBody = options.body && JSON.parse(options.body);
       return { ok: true, headers: { get: () => null }, text: async () => JSON.stringify(responseData) };
     },
-    require: name => name.endsWith('bdms.node') ? { init() {}, generateHttpSignatureHeaders: () => 'x-test\r\ntest\r\n' }
-      : require(name === './local-env.cjs' ? '../qishui-account/local-env.cjs' : name),
+    require: name => name === path.join(root, 'bdms.node') ? {
+      init(options) { initialized++; assert.equal(options.deviceId, device.did); },
+      generateHttpSignatureHeaders() { signatures++; return 'x-test\r\ntest\r\n'; },
+    } : name === './local-env.cjs' ? { sodaComponents: () => soda, osVersion: () => 'test-os' } : require(name),
   });
   new vm.Script(requestSource).runInContext(context);
   const api = context.module.exports;
@@ -161,4 +178,24 @@ test('signed requests reject nested status_info errors including expired session
   await api.getTrackMetadata({ trackId: '123', mediaType: 'ugc_clip', device, jar });
   assert.equal(requestBody.media_type, 'ugc_clip');
   await assert.rejects(api.getTrackMetadata({ trackId: '123', mediaType: 'ugc_video', device, jar }), e => e.code === 'unsupported');
+  assert.equal(initialized, 1);
+  assert.equal(signatures, 3);
+  assert.equal(requests, 3, 'the nested error assertions must reach the signed response handling');
+});
+
+test('a genuinely missing signing component still reports setup before any request', async () => {
+  let requested = false;
+  const context = vm.createContext({
+    Buffer, URL, AbortController, setTimeout, clearTimeout, Intl, module: { exports: {} },
+    fetch: async () => { requested = true; throw new Error('no network expected'); },
+    require: name => name === './local-env.cjs'
+      ? { sodaComponents: () => null, osVersion: () => 'test-os' }
+      : require(name),
+  });
+  new vm.Script(requestSource).runInContext(context);
+  await assert.rejects(context.module.exports.getTrackMetadata({ trackId: '123',
+    device: { aid: 386088, did: '123', iid: '456', identityType: 'fresh-plugin-pseudonymous', channel: 'mygo' },
+    jar: { 'sessionid|/': { name: 'sessionid', value: 'test-only', path: '/', expires: 0 } },
+  }), e => e.code === 'setup' && e.message.includes('未找到汽水签名组件'));
+  assert.equal(requested, false);
 });
