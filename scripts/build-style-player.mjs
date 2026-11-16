@@ -6,12 +6,12 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-if (!process.argv[2]) throw new Error('用法：node scripts/build-style-player.mjs <未修改的 MyGo 0.1.24 源码目录> [输出目录]');
+if (!process.argv[2]) throw new Error('用法：node scripts/build-style-player.mjs <未修改的 MyGo 0.1.25 源码目录> [输出目录]');
 const input = resolve(process.argv[2]);
 const output = resolve(process.argv[3] || join(root, 'dist/style-support/windows-amd64'));
-const version = readFileSync(join(input, 'mygo.config.ts'), 'utf8').match(/version:\s*["'](0\.1\.24)["']/)?.[1];
+const version = readFileSync(join(input, 'mygo.config.ts'), 'utf8').match(/version:\s*["'](0\.1\.25)["']/)?.[1];
 if (!version ||
-    !readFileSync(join(input, 'go.mod'), 'utf8').replaceAll("\r", "").startsWith('module mygo-music\n')) throw new Error('仅支持 MyGo Music v0.1.24 源码。');
+    !readFileSync(join(input, 'go.mod'), 'utf8').replaceAll("\r", "").startsWith('module mygo-music\n')) throw new Error('仅支持 MyGo Music v0.1.25 源码。');
 const temporary = mkdtempSync(join(tmpdir(), 'mygo-layout-build-'));
 function run(command, args, cwd) {
   const result = spawnSync(command, args, { cwd, stdio: 'inherit' });

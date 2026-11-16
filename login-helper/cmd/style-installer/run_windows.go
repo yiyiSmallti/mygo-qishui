@@ -166,12 +166,12 @@ func run(pid uint32, ack func(string) error) error {
 			}
 		}
 	}()
-	view := &enhancementView{state: "unsupported", diagnostics: "程序位置：" + parent.path + "\nSHA256：" + hash + "\n支持版本：Windows x64 MyGo 0.1.22 / 0.1.24"}
+	view := &enhancementView{state: "unsupported", diagnostics: "程序位置：" + parent.path + "\nSHA256：" + hash + "\n支持版本：Windows x64 MyGo 0.1.22 / 0.1.24 / 0.1.25"}
 	if hash == m.PayloadHash {
 		view.state = "installed"
 	} else if supportedHash(hash) {
 		view.state = "available"
-		view.upgrade = hash != officialHash
+		view.upgrade = hash != official125Hash && hash != officialHash && hash != previousOfficialHash
 	}
 	return showEnhancementManager(view, ack, &decision, func() receipt {
 		return install(pid, parent, root, m, hash)

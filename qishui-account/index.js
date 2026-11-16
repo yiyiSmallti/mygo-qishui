@@ -5,7 +5,7 @@ const SESSION = 'qishui-session-v1';
 const DIAGNOSTIC = 'qishui-login-diagnostic-v1';
 const DEVICE = 'qishui-device-v1';
 const PLAYBACK_ERRORS = 'qishui-playback-errors-v1';
-const VERSION = '0.6.14';
+const VERSION = '0.6.15';
 const UA = {
   windows: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   darwin: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -1098,7 +1098,7 @@ function appearancePage(opened = false, status = 'unknown') {
     title: '界面增强',
     description: (status === 'update-available' ? '界面增强有更新：插件已更新，增强程序仍是旧版。请打开增强管理确认更新。\n'
       : status === 'installed' ? '界面增强已是当前插件提供的版本。\n' : '') + (supported
-      ? (opened ? '增强管理窗口已打开。请在窗口中查看组件状态；只有确认安装才会关闭并重启 MyGo。' : '增强包已随插件提供，包含听歌模式、插件设置页入口和任务栏播放条。') + '\n支持官方 Windows x64 MyGo 0.1.22 / 0.1.24 与已验证的旧增强构建。安装后请在“设置 → 插件 → 汽水音乐”中使用“界面增强”，侧栏重复入口会隐藏；原版首次仍从此处启用。安装前请保存设置并暂停播放，原程序和已保存的数据会备份，账号与插件保留。'
+      ? (opened ? '增强管理窗口已打开。请在窗口中查看组件状态；只有确认安装才会关闭并重启 MyGo。' : '增强包已随插件提供，包含听歌模式、插件设置页入口和任务栏播放条。') + '\n支持官方 Windows x64 MyGo 0.1.22 / 0.1.24 / 0.1.25 与已验证的旧增强构建。安装后请在“设置 → 插件 → 汽水音乐”中使用“界面增强”，侧栏重复入口会隐藏；原版首次仍从此处启用。安装前请保存设置并暂停播放，原程序和已保存的数据会备份，账号与插件保留。'
       : '此样式安装助手目前仅支持 Windows x64。Mac 可继续使用汽水插件；此处不会修改播放器。'),
     sections: supported ? [{ links: [{ title: opened ? '再次打开增强管理' : '打开增强管理', subtitle: '检查版本、确认安装或查看已安装状态。', page: 'appearance/open/' + next, reload: true }] }] : [],
   };

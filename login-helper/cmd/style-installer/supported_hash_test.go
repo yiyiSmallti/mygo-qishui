@@ -16,6 +16,7 @@ func TestEnhancementStatus(t *testing.T) {
 	for _, tc := range []struct{ hash, want string }{
 		{payload, "installed"},
 		{officialHash, "not-installed"},
+		{official125Hash, "not-installed"},
 		{previousOfficialHash, "not-installed"},
 		{previousEnhanced124Hash, "update-available"},
 		{previousEnhanced0610Hash, "update-available"},
