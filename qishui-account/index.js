@@ -42,7 +42,7 @@ function spawnHelper(script) {
 let generation = 0;
 let signingIn = false;
 let activeHelper = null;
-const mediaProcesses = new Set();
+const mediaProcesses = new Map();
 const mediaInflight = new Map();
 
 function failure(message, code) {
@@ -230,6 +230,9 @@ export async function signIn() {
   if (signingIn) throw failure('登录窗口已打开，请完成当前扫码。');
   signingIn = true;
   const epoch = ++generation;
+  for (const [process, operation] of mediaProcesses) {
+    if (operation === 'addToPlaylist') { try { process.closeStdin(); } catch (_) {} }
+  }
   let helper, timer;
   const closedHelpers = new Set();
   const startedAt = Date.now();
@@ -324,13 +327,13 @@ export async function account() {
 export function signOut() {
   generation++;
   clearMusicCache();
-  for (const process of mediaProcesses) { try { process.closeStdin(); } catch (_) {} }
+  for (const process of mediaProcesses.keys()) { try { process.closeStdin(); } catch (_) {} }
   mediaInflight.clear();
   if (activeHelper) { try { activeHelper.closeStdin(); } catch (_) {} }
   host.storage.remove(SESSION);
 }
 
-function requestMedia(operation, params) {
+function requestMedia(operation, params, deadline) {
   const saved = readStored();
   if (!saved || !hasSession(saved.jar)) return Promise.reject(failure('请先登录汽水音乐。', 'signIn'));
   const epoch = generation, key = epoch + ':' + operation + ':' + JSON.stringify(params);
@@ -338,11 +341,16 @@ function requestMedia(operation, params) {
   const work = (async () => {
     let helper, timer;
     try {
+      const timeoutError = () => deadline === undefined
+        ? failure('获取音乐超时，请重试或选择较低音质。', 'unavailable')
+        : failure('添加到歌单超时，请先查看歌单确认结果。', 'unavailable');
+      if (deadline !== undefined && Date.now() >= deadline) throw timeoutError();
       const cacheDir = mediaCacheDir();
       if (!cacheDir) throw failure('MyGo 未提供插件数据目录，无法缓存音频。', 'unavailable');
       helper = spawnHelper('./media-helper.cjs');
-      mediaProcesses.add(helper);
-      helper.write(JSON.stringify({ ...params, operation, cacheDir, device: saved.device || host.storage.get(DEVICE),
+      mediaProcesses.set(helper, operation);
+      if (deadline !== undefined && Date.now() >= deadline) throw timeoutError();
+      helper.write(JSON.stringify({ ...params, operation, cacheDir, deadline, device: saved.device || host.storage.get(DEVICE),
         jar: saved.jar, accountId: saved.account && saved.account.id }) + '\n');
       let timedOut;
       const timeout = new Promise((_, reject) => { timedOut = reject; });
@@ -350,26 +358,29 @@ function requestMedia(operation, params) {
         clearTimeout(timer);
         timer = setTimeout(() => {
           try { helper.closeStdin(); } catch (_) {}
-          timedOut(failure('获取音乐超时，请重试或选择较低音质。', 'unavailable'));
+          timedOut(timeoutError());
         }, milliseconds);
       };
-      arm(28500);
+      arm(deadline === undefined ? 28500 : Math.max(0, deadline - Date.now()));
       let preparing = false, message;
       while (true) {
         const line = await Promise.race([helper.readLine(), timeout]);
         if (epoch !== generation) throw failure('账号已变化，本次音乐请求已取消。');
         if (typeof line !== 'string' || line.length > 4 * 1024 * 1024) throw failure('音乐组件未返回有效结果。', 'unavailable');
         try { message = JSON.parse(line); } catch (_) { throw failure('音乐组件返回无效消息。', 'unavailable'); }
+        if (deadline !== undefined && Date.now() >= deadline) throw timeoutError();
         if (message && message.type === 'progress') {
-          if (!preparing) { arm(720000); preparing = true; }
-        } else if (message && message.type === 'ready') arm(28500);
-        else break;
+          if (deadline === undefined && !preparing) { arm(720000); preparing = true; }
+        } else if (message && message.type === 'ready') {
+          if (deadline === undefined) arm(28500);
+        } else break;
       }
       if (epoch !== generation) throw failure('账号已变化，本次音乐请求已取消。');
       if (!message || message.ok !== true) {
         if (message && message.code === 'signIn') { host.storage.remove(SESSION); clearMusicCache(); }
         const code = message && ['signIn', 'setup', 'unavailable', 'unsupported'].includes(message.code) ? message.code : 'unavailable';
-        const error = failure(message && typeof message.message === 'string' ? message.message.slice(0, 220) : '这首歌暂时无法播放。', code);
+        const fallback = deadline === undefined ? '这首歌暂时无法播放。' : '未能确认添加结果，请先查看歌单。';
+        const error = failure(message && typeof message.message === 'string' ? message.message.slice(0, 220) : fallback, code);
         error.playbackDiagnostic = message && message.diagnostic;
         throw error;
       }
@@ -384,11 +395,11 @@ function requestMedia(operation, params) {
   return work;
 }
 
-function playbackIdentity(value) {
+function playbackIdentity(value, videoMessage = '这条收藏是视频作品，当前插件暂不支持视频播放。') {
   const id = safeId(value);
   const match = /^(?:(ugc_clip|ugc_video):)?(\d{1,32})$/.exec(id);
   if (!match) throw failure('歌曲标识无效。', 'unavailable');
-  if (match[1] === 'ugc_video') throw failure('这条收藏是视频作品，当前插件暂不支持视频播放。', 'unsupported');
+  if (match[1] === 'ugc_video') throw failure(videoMessage, 'unsupported');
   return { trackId: match[2], mediaType: match[1] || 'track' };
 }
 
@@ -729,7 +740,7 @@ function parseQishuiLyrics(content) {
   return { lines };
 }
 
-// Read-only music library. Merged after musicApi and normalization helpers.
+// Music library cache and actions.
 const MUSIC_PAGE = 50;
 const MUSIC_LIMIT = 5000;
 const MUSIC_LIST_LIMIT = 2000;
@@ -938,7 +949,12 @@ async function musicLoadMixed(context, deadline) {
   return state.items.map(item => item.raw);
 }
 
-function musicPlaylistList(own, mixed) {
+function writablePlaylist(raw, accountId) {
+  return !!raw && /^\d{1,32}$/.test(safeId(raw.id)) && safeId(raw.owner?.id) === accountId
+    && [2, 3, 11, '2', '3', '11'].includes(raw.type);
+}
+
+function musicPlaylistList(own, mixed, accountId) {
   // The native liked page is the single navigation entry for the account's
   // type-1 playlist. Keep it in the raw cache for liked(), but omit its card
   // here, including a duplicate copy returned by the collection endpoint.
@@ -947,7 +963,11 @@ function musicPlaylistList(own, mixed) {
   for (const raw of own) {
     if (Number(raw.type) === 1) continue;
     const item = mapPlaylist(raw, true);
-    if (item && !found.has(item.id)) { found.add(item.id); result.push(item); }
+    if (item && !found.has(item.id)) {
+      if (!writablePlaylist(raw, accountId)) item.fixed = true;
+      found.add(item.id);
+      result.push(item);
+    }
   }
   for (const entry of mixed) {
     if (entry.item_type !== 'playlist') continue;
@@ -986,7 +1006,36 @@ export async function playlists() {
   const deadline = musicDeadline(), context = musicContext();
   const [own, mixed] = await Promise.all([musicLoadOwn(context, deadline), musicLoadMixed(context, deadline)]);
   musicCurrent(context);
-  return musicPlaylistList(own, mixed);
+  return musicPlaylistList(own, mixed, context.id);
+}
+
+export async function addToPlaylist({ id, trackIds } = {}) {
+  const deadline = musicDeadline();
+  if (typeof id !== 'string' || !/^\d{1,32}$/.test(id)) throw failure('歌单标识无效。');
+  if (!Array.isArray(trackIds) || !trackIds.length) throw failure('请选择要添加的歌曲。');
+  const media = new Map();
+  for (const value of trackIds) {
+    if (typeof value !== 'string') throw failure('歌曲标识无效。');
+    const { trackId, mediaType } = playbackIdentity(value, '当前插件暂不支持将视频作品添加到歌单。');
+    media.set(mediaType + ':' + trackId, { id: trackId, type: mediaType });
+  }
+  const saved = readStored();
+  if (signingIn || !saved || !hasSession(saved.jar)) throw failure('请先登录汽水音乐。', 'signIn');
+  const context = musicContext();
+  const own = await musicLoadOwn(context, deadline);
+  musicCurrent(context);
+  const target = own.find(raw => safeId(raw.id) === id);
+  if (!writablePlaylist(target, context.id)) throw failure('只能向当前汽水账号的普通自建歌单添加歌曲。');
+  try {
+    const result = await requestMedia('addToPlaylist', { playlistId: id, media: [...media.values()] }, deadline);
+    if (result !== true) throw failure('未能确认添加结果，请先查看歌单。');
+  } finally {
+    // The server may have applied the write before its response was lost.
+    if (musicCache?.key === context.key) {
+      musicCache.own = null;
+      musicCache.tracks.delete(id);
+    }
+  }
 }
 
 export async function playlist({ id } = {}) {
@@ -1010,6 +1059,7 @@ export async function playlist({ id } = {}) {
   const mine = safeId(state.meta && state.meta.owner && state.meta.owner.id) === context.id;
   const result = mapPlaylist(state.meta, mine);
   if (!result) throw failure('汽水没有返回有效的歌单资料。');
+  if (mine && !writablePlaylist(state.meta, context.id)) result.fixed = true;
   result.tracks = state.items.slice();
   result.trackCount = result.tracks.length;
   if (!state.done || interrupted) {
@@ -1048,7 +1098,7 @@ export async function home() {
   const context = musicContext();
   const recommendations = recommendationSections();
   const [own, mixed] = await Promise.all([musicLoadOwn(context, deadline), musicLoadMixed(context, deadline)]);
-  const all = musicPlaylistList(own, mixed);
+  const all = musicPlaylistList(own, mixed, context.id);
   const favorites = await musicSpecialTracks(context, 1, 0, deadline);
   musicCurrent(context);
   const sections = [...await enhancement, ...await musicBudget(recommendations, deadline), { title: '我的汽水音乐', links: [
@@ -1168,7 +1218,7 @@ export async function browse({ page } = {}) {
       sections: [{ stations: scenes ? catalog.scenes : catalog.radios }] };
   }
   if (page === 'help') return {
-    title: '汽水音乐使用说明', subtitle: '播放和浏览页面只读取汽水资料；点击心形才添加或取消喜欢。歌单与专辑收藏仍为只读。',
+    title: '汽水音乐使用说明', subtitle: '在歌曲菜单中选择「添加到歌单」，即可加入自建歌单。点击心形可添加或取消喜欢。',
     sections: [{ links: [{ title: '打开音乐库', page: 'library' }] }],
   };
   if (page === 'library-refresh') { clearMusicCache(); page = 'library'; }
@@ -1186,7 +1236,7 @@ export async function browse({ page } = {}) {
   }
   if (page !== 'library' && page !== 'library/playlists') throw failure('这个音乐库页面不存在。');
   const [own, mixed] = await Promise.all([musicLoadOwn(context, deadline), musicLoadMixed(context, deadline)]);
-  const all = musicPlaylistList(own, mixed);
+  const all = musicPlaylistList(own, mixed, context.id);
   const sections = [];
   const mine = all.filter(item => item.mine), collected = all.filter(item => !item.mine);
   if (mine.length) sections.push({ title: '我的歌单', playlists: mine });

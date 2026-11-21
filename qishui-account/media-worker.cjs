@@ -9,7 +9,7 @@ const crypto = require('node:crypto');
 const readline = require('node:readline');
 const { pathToFileURL } = require('node:url');
 const { setTimeout: wait } = require('node:timers/promises');
-const { getTrackMetadata, getSearchMetadata } = require('./media-request.cjs');
+const { getTrackMetadata, getSearchMetadata, appendPlaylistMedia } = require('./media-request.cjs');
 const { sodaAddon } = require('./local-env.cjs');
 const { decryptFile, inspectFile } = require('./mp4-cenc.cjs');
 // Set from the request: MyGo's own data folder for this plugin, per OS.
@@ -257,8 +257,12 @@ async function prepareStream(message, data) {
     bitRate: Math.round(stat.size * 8000 / modelMs) };
 }
 async function run(message) {
-  if (!message || typeof message !== 'object' || !['stream', 'lyrics', 'search'].includes(message.operation)) fail('音乐请求无效。');
+  if (!message || typeof message !== 'object' || !['stream', 'lyrics', 'search', 'addToPlaylist'].includes(message.operation)) fail('音乐请求无效。');
   const options = { device: message.device, jar: message.jar, signal: controller.signal };
+  if (message.operation === 'addToPlaylist') {
+    stage = 'playlistAppend';
+    return appendPlaylistMedia({ ...options, playlistId: message.playlistId, media: message.media, deadline: message.deadline });
+  }
   if (message.operation === 'search') return getSearchMetadata({ ...options, query: message.query, kind: message.kind, cursor: message.cursor, searchId: message.searchId });
   const data = await getTrackMetadata({ ...options, trackId: message.trackId, mediaType: message.mediaType || 'track' });
   if (message.operation === 'lyrics') return { content: typeof data.lyric?.content === 'string' ? data.lyric.content : '' };
@@ -283,7 +287,8 @@ input.once('line', async line => {
     const networkCode = error?.networkCode || error?.cause?.code || error?.code;
     const hint = typeof networkCode === 'string' && /^[A-Z0-9_]{1,40}$/.test(networkCode) ? '（' + networkCode + '）' : '';
     result = { ok: false, code: error.safeMediaError ? error.code : 'unavailable',
-      message: error.safeMediaError ? error.message : (stageNames[stage] || '播放音乐') + '失败' + hint + '，请稍后重试。',
+      message: error.safeMediaError ? error.message : stage === 'playlistAppend' ? '未能确认添加结果，请先查看歌单。'
+        : (stageNames[stage] || '播放音乐') + '失败' + hint + '，请稍后重试。',
       diagnostic: { stage, networkCode,
         ...(Number.isInteger(error.statusCode) && error.statusCode >= 0 && error.statusCode <= 10000000 ? { serviceStatus: error.statusCode } : {}),
         ...(Number.isInteger(lastHttpStatus) ? { httpStatus: lastHttpStatus } : {}),

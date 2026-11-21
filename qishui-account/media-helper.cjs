@@ -19,22 +19,29 @@ function finish(message) {
   process.exitCode = message.ok ? 0 : 1;
   process.stdout.write(JSON.stringify(message) + '\n');
   if (worker) worker.stdin.end();
-  setTimeout(() => { if (worker && worker.exitCode === null) worker.kill(); process.exit(message.ok ? 0 : 1); }, 1200).unref();
+  if (!preparing) setTimeout(() => { if (worker && worker.exitCode === null) worker.kill(); process.exit(message.ok ? 0 : 1); }, 1200).unref();
 }
 input.once('line', async line => {
   if (line.length > 262144) return finish({ ok: false, code: 'unavailable', message: '播放连接参数无效。' });
   let message;
   try { message = JSON.parse(line); if (!message || typeof message !== 'object') throw new Error(); }
   catch { return finish({ ok: false, code: 'unavailable', message: '播放连接参数无效。' }); }
+  const deadline = message.operation === 'addToPlaylist' ? message.deadline : undefined;
+  const appendTimeout = { ok: false, code: 'unavailable', message: '添加到歌单超时，请先查看歌单确认结果。' };
   try {
     clearTimeout(timeout);
+    if (message.operation === 'addToPlaylist') {
+      if (!Number.isSafeInteger(deadline) || deadline <= Date.now()) return finish(appendTimeout);
+      timeout = setTimeout(() => finish(appendTimeout), deadline - Date.now());
+    }
     preparing = true;
     await prepareSdk({ dataDir: typeof message.cacheDir === 'string' ? path.dirname(message.cacheDir) : '', signal: sdkController.signal,
       onProgress: text => { if (!finished) process.stdout.write(JSON.stringify({ type: 'progress', text }) + '\n'); } });
     preparing = false;
     if (finished) return;
+    if (deadline !== undefined && deadline <= Date.now()) return finish(appendTimeout);
     process.stdout.write(JSON.stringify({ type: 'ready' }) + '\n');
-    arm();
+    if (deadline === undefined) arm();
   } catch (error) {
     preparing = false;
     return finish({ ok: false, code: 'setup', message: error.code === 'setup' ? error.message : '汽水组件准备失败，请检查网络后重试。' });

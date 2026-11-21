@@ -46,14 +46,14 @@ function loadWorker(root, options = {}) {
     require(name) {
       if (name === 'node:fs') return fsMock;
       if (name === 'node:child_process') return { spawn: options.spawn || (() => { throw new Error('Unexpected process'); }) };
-      if (name === './media-request.cjs') return { getTrackMetadata() {}, getSearchMetadata() {} };
+      if (name === './media-request.cjs') return options.request || {};
       if (name === './local-env.cjs') return require('../qishui-account/local-env.cjs');
       if (name === './mp4-cenc.cjs') return require('../qishui-account/mp4-cenc.cjs');
       if (name.endsWith('device.node')) throw new Error('Native decoder must not run in unit tests');
       return require(name);
     },
   });
-  new vm.Script(prefix + '\nglobalThis.testApi = { download, prepareStream, validCachedFlac };').runInContext(context);
+  new vm.Script(prefix + '\nglobalThis.testApi = { download, prepareStream, validCachedFlac, run };').runInContext(context);
   return context.testApi;
 }
 
@@ -139,7 +139,41 @@ test('gateway discards native stdout and validates private result envelopes', as
   input.end(); worker.stdout.end(); worker.stdin.end();
 });
 
-test('signed requests reject nested status_info errors including expired sessions', async t => {
+test('gateway forwards append IPC and refuses to launch a worker after SDK preparation overruns', async () => {
+  for (const overrun of [false, true]) {
+    const input = new PassThrough(), worker = new EventEmitter(), output = [];
+    worker.stdin = new PassThrough(); worker.stdout = new PassThrough(); worker.kill = () => {};
+    const initialTime = Date.now(), deadline = initialTime + 5000;
+    let now = initialTime, spawns = 0, forwarded = '';
+    worker.stdin.on('data', chunk => { forwarded += chunk.toString(); });
+    const context = vm.createContext({
+      __dirname: '.', AbortController, Date: class extends Date { static now() { return now; } },
+      process: { stdin: input, stdout: { write: text => output.push(JSON.parse(text)) }, execPath: 'node', exit() {} },
+      setTimeout: () => ({ unref() {} }), clearTimeout() {},
+      require: name => name === 'node:child_process' ? { spawn() { spawns++; return worker; } }
+        : name === './native-sdk.cjs' ? { async prepareSdk({ onProgress }) {
+          onProgress('preparing'); if (overrun) now = deadline;
+        } } : require(name),
+    });
+    new vm.Script(gatewaySource).runInContext(context);
+    const message = { operation: 'addToPlaylist', playlistId: '7012345678901234567', media: [{ id: '101', type: 'track' }], deadline };
+    input.write(JSON.stringify(message) + '\n');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(output[0].type, 'progress');
+    if (overrun) {
+      assert.equal(spawns, 0);
+      assert.equal(output[1].ok, false);
+      assert.match(output[1].message, /超时/);
+    } else {
+      assert.equal(spawns, 1);
+      assert.equal(output[1].type, 'ready');
+      assert.deepEqual(JSON.parse(forwarded), message);
+    }
+    input.end(); worker.stdout.end(); worker.stdin.end();
+  }
+});
+
+test('signed metadata requests filter nested errors and the append worker signs only the fixed POST', async t => {
   // Exercise the real ASAR version parser and request signer wiring using
   // isolated metadata and a fake addon, never a locally installed SDK.
   const root = fixture(t), asar = path.join(root, 'app.asar');
@@ -153,20 +187,26 @@ test('signed requests reject nested status_info errors including expired session
   const device = { aid: 386088, did: '123456789012345', iid: '987654321012345', identityType: 'fresh-plugin-pseudonymous', channel: 'mygo' };
   const jar = { 'sessionid|/': { name: 'sessionid', value: 'test-only', path: '/', expires: 0 } };
   let responseData = { status_code: 0, status_info: { code: 1000016 } }, requestBody;
+  let requestUrl, requestOptions, signedURL, signedHeaders, now = Date.now(), finishSigning;
   let requests = 0, signatures = 0, initialized = 0;
   const context = vm.createContext({
     Buffer, URL, AbortController, setTimeout, clearTimeout, Intl, module: { exports: {} },
+    Date: class extends Date { static now() { return now; } },
     fetch: async (url, options) => {
       requests++;
+      requestUrl = new URL(url); requestOptions = options;
       assert.equal(new URL(url).origin, 'https://api.qishui.com');
       assert.equal(options.headers['user-agent'], 'LunaPC/3.7.0');
       assert.equal(options.headers['x-test'], 'test');
       requestBody = options.body && JSON.parse(options.body);
-      return { ok: true, headers: { get: () => null }, text: async () => JSON.stringify(responseData) };
+      return { ok: true, headers: { get: () => null }, text: async () => responseData === undefined ? '' : JSON.stringify(responseData) };
     },
     require: name => name === path.join(root, 'bdms.node') ? {
       init(options) { initialized++; assert.equal(options.deviceId, device.did); },
-      generateHttpSignatureHeaders() { signatures++; return 'x-test\r\ntest\r\n'; },
+      generateHttpSignatureHeaders(url, headers) {
+        signatures++; signedURL = url; signedHeaders = headers; finishSigning?.();
+        return 'x-test\r\ntest\r\n';
+      },
     } : name === './local-env.cjs' ? { sodaComponents: () => soda, osVersion: () => 'test-os' } : require(name),
   });
   new vm.Script(requestSource).runInContext(context);
@@ -181,6 +221,42 @@ test('signed requests reject nested status_info errors including expired session
   assert.equal(initialized, 1);
   assert.equal(signatures, 3);
   assert.equal(requests, 3, 'the nested error assertions must reach the signed response handling');
+
+  const playlistId = '7012345678901234567', song = '8012345678901234567';
+  const media = [{ id: song, type: 'track' }, { id: song, type: 'ugc_clip' }];
+  const worker = loadWorker(root, { request: api });
+  const append = overrides => worker.run({ operation: 'addToPlaylist', playlistId, media, device, jar, deadline: now + 5000,
+    route: '/luna/pc/me/playlist/delete', ...overrides });
+  for (const confirmation of [{ status_code: 0 }, { status_info: { code: '0' } }, { media }, { playlist: { id: playlistId } }]) {
+    responseData = { ...confirmation, extra: 'private response data' };
+    assert.equal(await append(), true);
+  }
+  assert.equal(requestUrl.pathname, '/luna/pc/me/playlist/media/append');
+  assert.equal(requestOptions.method, 'POST');
+  assert.equal(requestOptions.redirect, 'manual');
+  assert.equal(requestOptions.headers['content-type'], 'application/json; charset=utf-8');
+  const stub = crypto.createHash('md5').update(requestOptions.body).digest('hex').toUpperCase();
+  assert.equal(requestOptions.headers['X-SS-STUB'], stub);
+  assert.equal(signedURL, requestUrl.href);
+  assert.ok(signedHeaders.includes('X-SS-STUB\r\n' + stub));
+  assert.deepEqual(requestBody, { playlist_id: playlistId, media });
+
+  for (const empty of [{}, { status_info: {} }, { media: [null], playlist: {} }, { status_code: 0, playlist: { id: '123' } }]) {
+    responseData = empty;
+    await assert.rejects(append(), error => error.code === 'invalidResponse');
+  }
+  responseData = { status_info: { code: 1000016 }, media };
+  await assert.rejects(append(), error => error.code === 'signIn');
+  assert.equal(requests, 12);
+  responseData = undefined;
+  await assert.rejects(append(), error => error.code === 'emptyResponse');
+  assert.equal(requests, 13);
+  await assert.rejects(append({ jar: {} }), error => error.code === 'signIn');
+  await assert.rejects(append({ media: [...media, { id: '123', type: 'ugc_video' }] }), error => error.code === 'invalidTrack');
+  await assert.rejects(append({ deadline: now }), error => error.code === 'timeout');
+  finishSigning = () => { now += 5000; };
+  await assert.rejects(append(), error => error.code === 'timeout');
+  assert.equal(requests, 13, 'invalid, unauthenticated, or late append calls cannot reach fetch');
 });
 
 test('a genuinely missing signing component still reports setup before any request', async () => {
