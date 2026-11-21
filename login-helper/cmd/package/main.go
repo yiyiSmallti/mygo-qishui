@@ -35,6 +35,7 @@ func run(root, native, style, out string) error {
 	}
 	var sums strings.Builder
 	for _, platform := range []string{"windows-amd64", "darwin-arm64"} {
+		mac := platform == "darwin-arm64"
 		name := "qishui-login"
 		if platform == "windows-amd64" {
 			name += ".exe"
@@ -143,6 +144,14 @@ func run(root, native, style, out string) error {
 				return err
 			}
 			defer in.Close()
+			if mac && name == "plugin.json" {
+				manifest, err := macPluginManifest(in)
+				if err != nil {
+					return fmt.Errorf("prepare Mac plugin manifest: %w", err)
+				}
+				_, err = entry.Write(manifest)
+				return err
+			}
 			_, err = io.Copy(entry, in)
 			return err
 		}
@@ -158,7 +167,7 @@ func run(root, native, style, out string) error {
 			if relative == "." {
 				return nil
 			}
-			if strings.HasPrefix(d.Name(), ".") || relative == "native" {
+			if strings.HasPrefix(d.Name(), ".") || relative == "native" || (mac && relative == "style-helper.cjs") {
 				if d.IsDir() {
 					return filepath.SkipDir
 				}
@@ -213,4 +222,46 @@ func run(root, native, style, out string) error {
 		fmt.Println(archive)
 	}
 	return os.WriteFile(filepath.Join(out, "SHA256SUMS"), []byte(sums.String()), 0644)
+}
+
+// MyGo reads navigation and settings actions before running the plugin.
+func macPluginManifest(in io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(in)
+	if err != nil {
+		return nil, err
+	}
+	var manifest map[string]json.RawMessage
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return nil, err
+	}
+	for _, key := range []string{"navigation", "settingsActions"} {
+		value, ok := manifest[key]
+		if !ok {
+			continue
+		}
+		var actions []json.RawMessage
+		if err := json.Unmarshal(value, &actions); err != nil {
+			return nil, fmt.Errorf("%s: %w", key, err)
+		}
+		kept := make([]json.RawMessage, 0, len(actions))
+		for _, action := range actions {
+			var item struct{ Page string }
+			if err := json.Unmarshal(action, &item); err != nil {
+				return nil, fmt.Errorf("%s: %w", key, err)
+			}
+			if item.Page != "appearance" && !strings.HasPrefix(item.Page, "appearance/") {
+				kept = append(kept, action)
+			}
+		}
+		encoded, err := json.Marshal(kept)
+		if err != nil {
+			return nil, err
+		}
+		manifest[key] = encoded
+	}
+	data, err = json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(data, '\n'), nil
 }
