@@ -16,7 +16,7 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function setup(api) {
+function setup(api, spawn) {
   const storage = new Map();
   const calls = [];
   const setSession = id => {
@@ -26,7 +26,8 @@ function setup(api) {
   setSession('account-a');
   const context = vm.createContext({
     URL, setTimeout, clearTimeout,
-    host: { storage: { get: key => storage.get(key), set: (key, value) => storage.set(key, value), remove: key => storage.delete(key) } },
+    host: { platform: 'darwin', dataDir: '/test/plugin-data/qishui-account', spawn,
+      storage: { get: key => storage.get(key), set: (key, value) => storage.set(key, value), remove: key => storage.delete(key) } },
     testApi: async (route, params) => {
       const call = { route, params: plain(params), account: storage.get('qishui-session-v1')?.account.id };
       calls.push(call);
@@ -36,7 +37,7 @@ function setup(api) {
   vm.runInContext(source.replace(/^export\s+/gm, '') + `
     musicApi = testApi;
     account = async () => readStored()?.account || null;
-    this.plugin = { playlists, playlist, liked, savedAlbums, home, browse, search, signOut };
+    this.plugin = { playlists, playlist, createPlaylist, addToPlaylist, liked, savedAlbums, home, browse, search, signOut };
     this.changeGeneration = () => { generation++; };
   `, context);
   return {
@@ -44,6 +45,129 @@ function setup(api) {
     changeAccount(id) { setSession(id); context.changeGeneration(); },
   };
 }
+
+test('owned playlist count includes uploaded sounds when count_visible is supplied', async () => {
+  const id = '7012345678901234567';
+  const { plugin } = setup(({ route }) => route.endsWith('/me/playlist')
+    ? { playlists: [{ ...list(id), count_tracks: 1, stats: { count_visible: 2 } }] } : emptyMixed);
+  assert.equal((await plugin.playlists())[0].trackCount, 2);
+});
+
+test('createPlaylist returns the new playlist and refreshes the owned list', async () => {
+  const id = '7012345678901234567';
+  const created = { ...list(id), title: '周末歌单', count_tracks: 0 };
+  let exists = false;
+  const writes = [];
+  const { plugin } = setup(({ route }) => route.endsWith('/me/playlist')
+    ? { playlists: exists ? [created] : [] } : emptyMixed,
+  () => ({
+    write(line) { writes.push(JSON.parse(line)); },
+    async readLine() { exists = true; return JSON.stringify({ ok: true, value: created }); },
+    closeStdin() {},
+  }));
+  assert.equal((await plugin.playlists()).length, 0);
+  await assert.rejects(plugin.createPlaylist({ name: '   ' }), /歌单名称/);
+  await assert.rejects(plugin.createPlaylist({ name: 'a'.repeat(31) }), /歌单名称/);
+  assert.equal(writes.length, 0);
+  const playlist = await plugin.createPlaylist({ name: ' 周末歌单 ' });
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].operation, 'createPlaylist');
+  assert.equal(writes[0].name, '周末歌单');
+  assert.equal(playlist.id, id);
+  assert.equal(playlist.name, created.title);
+  assert.equal(playlist.mine, true);
+  assert.equal(playlist.trackCount, 0);
+  assert.equal((await plugin.playlists())[0].id, id);
+});
+
+test('addToPlaylist checks the owner and type from the library and sends the whole deduplicated batch over IPC', async () => {
+  assert.match(source, /^export async function addToPlaylist\(/m);
+  const ids = ['7012345678901234567', '7012345678901234568', '7012345678901234569',
+    '7012345678901234570', '7012345678901234571', '7012345678901234572', '7012345678901234573', '7012345678901234574'];
+  const [target, type3, type11, liked, douyin, unknown, wrongOwner, collected] = ids;
+  const song = '8012345678901234567', clip = 'ugc_clip:' + song;
+  const playlists = [list(target), list(type3, '3'), list(type11, 11), list(liked, 1), list(douyin, 4),
+    list(unknown, 99), list(wrongOwner, 2, 'account-b')];
+  const pending = deferred(), started = deferred(), ipc = [];
+  const { plugin, calls } = setup(({ route }) => route.endsWith('/me/playlist') ? { playlists } : {
+    mixed_collections: [{ item_type: 'playlist', playlist: list(collected) }],
+  }, (_command, args) => {
+    assert.deepEqual(plain(args), ['./media-helper.cjs']);
+    return {
+      write(line) { ipc.push(JSON.parse(line)); started.resolve(); },
+      readLine: () => pending.promise,
+      closeStdin() {},
+    };
+  });
+  const cards = await plugin.playlists();
+  assert.deepEqual(plain(cards.filter(card => card.mine && !card.fixed).map(card => card.id)), [target, type3, type11]);
+  assert.equal(cards.find(card => card.id === collected).saved, true);
+  assert.equal(cards.some(card => card.id === liked), false);
+  const add = (id, trackIds = [song]) => plugin.addToPlaylist({ id, trackIds });
+  for (const id of [liked, douyin, unknown, wrongOwner, collected]) await assert.rejects(add(id), /普通自建歌单/);
+  for (const invalid of [undefined, [], [song, 'broken'], [song, 'ugc_video:123'], [song, Number(song)]]) {
+    await assert.rejects(plugin.addToPlaylist({ id: target, trackIds: invalid }));
+  }
+  assert.equal(ipc.length, 0);
+  const first = add(target, [song, clip, song]), second = add(target, [song, clip]);
+  await started.promise;
+  assert.equal(ipc.length, 1);
+  assert.equal(ipc[0].operation, 'addToPlaylist');
+  assert.equal(ipc[0].accountId, 'account-a');
+  assert.equal(ipc[0].playlistId, target);
+  assert.deepEqual(ipc[0].media, [{ id: song, type: 'track' }, { id: song, type: 'ugc_clip' }]);
+  assert.ok(ipc[0].deadline > Date.now() && ipc[0].deadline <= Date.now() + 25000);
+  pending.resolve(JSON.stringify({ ok: true, value: true }));
+  await Promise.all([first, second]);
+  assert.equal(ipc.length, 1);
+  assert.equal(calls.length, 2, 'the write reuses the cached list without extra reads');
+});
+
+test('confirmed and uncertain writes refresh the target detail and owned list without dropping other library caches', async () => {
+  const target = '7012345678901234567', other = '7012345678901234568';
+  let count = 1, confirmed = true, writes = 0;
+  const { plugin, calls } = setup(({ route, params }) => {
+    if (route.endsWith('/me/playlist')) return { playlists: [{ ...list(target), count_tracks: count }, list(other)] };
+    if (route.endsWith('/collection/mixed')) return emptyMixed;
+    return { playlist: list(params.playlist_id), media_resources: tracks(0, params.playlist_id === target ? count : 1) };
+  }, () => ({
+    write() { count++; writes++; },
+    readLine: async () => JSON.stringify(confirmed ? { ok: true, value: true } : { ok: false, message: '未能确认添加结果' }),
+    closeStdin() {},
+  }));
+  await plugin.playlists();
+  await plugin.playlist({ id: target });
+  await plugin.playlist({ id: other });
+  await plugin.addToPlaylist({ id: target, trackIds: ['101'] });
+  assert.equal((await plugin.playlists())[0].trackCount, 2);
+  assert.equal((await plugin.playlist({ id: target })).tracks.length, 2);
+  confirmed = false;
+  await assert.rejects(plugin.addToPlaylist({ id: target, trackIds: ['102'] }), /未能确认/);
+  assert.equal((await plugin.playlists())[0].trackCount, 3);
+  assert.equal((await plugin.playlist({ id: target })).tracks.length, 3);
+  await plugin.playlist({ id: other });
+  assert.equal(writes, 2, 'the uncertain write is never replayed');
+  assert.equal(calls.filter(call => call.route.endsWith('/collection/mixed')).length, 1);
+  assert.equal(calls.filter(call => call.params.playlist_id === other).length, 1);
+});
+
+test('addToPlaylist refuses signed-out calls and closes the helper on logout', async () => {
+  const id = '7012345678901234567', input = { id, trackIds: ['101'] };
+  const started = deferred(), output = deferred();
+  let closed = false;
+  const { plugin, calls } = setup(() => ({ playlists: [list(id)] }), () => ({
+    write() { started.resolve(); },
+    readLine: () => output.promise,
+    closeStdin() { closed = true; output.resolve(null); },
+  }));
+  const adding = plugin.addToPlaylist(input);
+  await started.promise;
+  plugin.signOut();
+  assert.equal(closed, true);
+  await assert.rejects(adding, /账号已变化/);
+  await assert.rejects(plugin.addToPlaylist(input), error => error.code === 'signIn');
+  assert.equal(calls.length, 1);
+});
 
 test('playlist discovery follows all cursors and keeps owned and saved lists distinct', async () => {
   const { plugin, calls } = setup(({ route, params }) => {
@@ -250,13 +374,42 @@ test('invalid offsets are rejected before any private library request', async ()
   assert.equal(calls.length, 0);
 });
 
+function setupSearch(respond) {
+  const requests = [];
+  const { plugin } = setup(() => assert.fail('search must use the signed helper'), (_command, args) => {
+    assert.deepEqual(plain(args), ['./media-helper.cjs']);
+    let message;
+    return {
+      write(line) {
+        message = JSON.parse(line);
+        assert.equal(message.operation, 'search');
+        requests.push(message);
+      },
+      async readLine() { return JSON.stringify({ ok: true, value: await respond(message) }); },
+      closeStdin() {},
+    };
+  });
+  return { plugin, requests };
+}
+
+test('all search tabs use the signed helper with their corresponding kinds', async () => {
+  const { plugin, requests } = setupSearch(() => ({ result_groups: [] }));
+  for (const kind of ['tracks', 'artists', 'albums', 'playlists']) {
+    const result = await plugin.search({ query: ' 周杰伦 ', kind });
+    assert.deepEqual(plain(result), { [kind]: [], more: false });
+  }
+  assert.deepEqual(requests.map(request => [request.kind, request.query, request.cursor]), [
+    ['track', '周杰伦', '0'], ['artist', '周杰伦', '0'], ['album', '周杰伦', '0'], ['playlist', '周杰伦', '0'],
+  ]);
+});
+
 test('concurrent equal searches share a pending page while different queries can run independently', async () => {
   const firstGate = deferred(), secondGate = deferred();
-  const { plugin, calls } = setup(({ params }) => params.q === 'first' ? firstGate.promise : secondGate.promise);
+  const { plugin, requests } = setupSearch(({ query }) => query === 'first' ? firstGate.promise : secondGate.promise);
   const one = plugin.search({ query: 'first' });
   const duplicate = plugin.search({ query: 'first' });
   const another = plugin.search({ query: 'second' });
-  const callCounts = { first: calls.filter(call => call.params.q === 'first').length, second: calls.filter(call => call.params.q === 'second').length };
+  const callCounts = { first: requests.filter(call => call.query === 'first').length, second: requests.filter(call => call.query === 'second').length };
   firstGate.resolve({ result_groups: [{ id: 'tracks', data: [track('first-result')], has_more: false }] });
   secondGate.resolve({ result_groups: [{ id: 'tracks', data: [track('second-result')], has_more: false }] });
   const values = await Promise.all([one, duplicate, another]);
@@ -266,7 +419,7 @@ test('concurrent equal searches share a pending page while different queries can
 
 test('search does not cache a page with an invalid cursor and can retry it', async () => {
   let attempts = 0;
-  const { plugin, calls } = setup(() => {
+  const { plugin, requests } = setupSearch(() => {
     attempts++;
     return attempts === 1
       ? { result_groups: [{ id: 'tracks', data: [track('must-not-commit')], has_more: true, next_cursor: '0' }] }
@@ -275,5 +428,5 @@ test('search does not cache a page with an invalid cursor and can retry it', asy
   await assert.rejects(plugin.search({ query: 'term' }), /游标/);
   const result = await plugin.search({ query: 'term' });
   assert.deepEqual(plain(result.tracks).map(item => item.id), ['valid-result']);
-  assert.equal(calls.length, 2);
+  assert.equal(requests.length, 2);
 });

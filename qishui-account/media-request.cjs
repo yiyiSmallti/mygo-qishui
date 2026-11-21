@@ -122,7 +122,8 @@ function addSignature(signer, url, headers) {
  * encryption metadata inside its local playback worker; do not log/cache them.
  * No storage, official app profile, BDTicket state or membership flags are read.
  */
-async function requestMetadata({ route, params = {}, payload, label, device, jar, soda = sodaComponents(), signal, timeoutMs = 12000 }) {
+async function requestMetadata({ route, params = {}, payload, label, device, jar, soda = sodaComponents(), signal, timeoutMs = 12000, deadline }) {
+  if (deadline !== undefined && Date.now() >= deadline) fail('添加到歌单超时，请先查看歌单确认结果。', 'timeout');
   validateDevice(device);
   const cookie = cookieHeader(jar, route);
   if (signal?.aborted) fail('已取消获取' + label + '。', 'cancelled');
@@ -155,7 +156,12 @@ async function requestMetadata({ route, params = {}, payload, label, device, jar
   };
   addSignature(signer, url.href, headers);
   const controller = new AbortController();
-  const timeout = Math.max(1000, Math.min(20000, Number.isFinite(timeoutMs) ? timeoutMs : 12000));
+  let timeout = Math.max(1000, Math.min(20000, Number.isFinite(timeoutMs) ? timeoutMs : 12000));
+  if (deadline !== undefined) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) fail('获取汽水' + label + '超时。', 'timeout');
+    timeout = Math.min(timeout, remaining);
+  }
   const timer = setTimeout(() => controller.abort(), timeout);
   const cancel = () => controller.abort();
   signal?.addEventListener('abort', cancel, { once: true });
@@ -232,4 +238,59 @@ async function getSearchMetadata({ query, kind = 'track', cursor = '0', searchId
   });
 }
 
-module.exports = { getTrackMetadata, getSearchMetadata };
+async function appendPlaylistMedia({ playlistId, media, device, jar, signal, deadline }) {
+  const validId = id => typeof id === 'string' && /^\d{1,32}$/.test(id);
+  if (!validId(playlistId)) fail('歌单标识无效。', 'invalidPlaylist');
+  if (!Array.isArray(media) || !media.length || media.some(item => !validId(item?.id) || !['track', 'ugc_clip'].includes(item.type))) {
+    fail('添加到歌单的歌曲标识或类型无效。', 'invalidTrack');
+  }
+  if (!Number.isSafeInteger(deadline) || Date.now() >= deadline) fail('添加到歌单超时，请先查看歌单确认结果。', 'timeout');
+  let result;
+  try {
+    result = await requestMetadata({
+      route: '/luna/pc/me/playlist/media/append',
+      payload: { playlist_id: playlistId, media: media.map(({ id, type }) => ({ id, type })) },
+      label: '添加到歌单的结果', device, jar, signal, deadline,
+    });
+  } catch (error) {
+    if (['network', 'timeout', 'emptyResponse', 'invalidResponse'].includes(error.code)) {
+      fail('未能确认添加结果，请先查看歌单。', error.code, error.statusCode, error.networkCode);
+    }
+    throw error;
+  }
+  const statuses = [result.status_code, result.status_info?.code, result.status_info?.status_code];
+  const playlist = result.playlist;
+  const confirmedStatus = statuses.some(code => code === 0 || code === '0');
+  const confirmedMedia = Array.isArray(result.media) && result.media.some(item => validId(item?.id));
+  const confirmedPlaylist = playlist?.id === playlistId || (Number.isSafeInteger(playlist?.count_tracks) && playlist.count_tracks >= 0);
+  if ((playlist?.id != null && playlist.id !== playlistId) || !(confirmedStatus || confirmedMedia || confirmedPlaylist)) {
+    fail('未能确认添加结果，请先查看歌单。', 'invalidResponse');
+  }
+  return true;
+}
+
+async function createPlaylist({ name, device, jar, signal, deadline }) {
+  if (typeof name !== 'string' || !name.trim() || name.length > 30 || /[\u0000-\u001f\u007f]/.test(name)) {
+    fail('请输入 1 到 30 字的歌单名称。', 'invalidPlaylist');
+  }
+  if (!Number.isSafeInteger(deadline) || Date.now() >= deadline) fail('创建歌单超时，请先查看歌单确认结果。', 'timeout');
+  let result;
+  try {
+    result = await requestMetadata({
+      route: '/luna/pc/me/playlist', payload: { name: name.trim(), is_private: true },
+      label: '创建歌单的结果', device, jar, signal, deadline,
+    });
+  } catch (error) {
+    if (['network', 'timeout', 'emptyResponse', 'invalidResponse'].includes(error.code)) {
+      fail('未能确认创建结果，请先查看歌单。', error.code, error.statusCode, error.networkCode);
+    }
+    throw error;
+  }
+  const playlist = result.playlist;
+  if (typeof playlist?.id !== 'string' || !/^\d{1,32}$/.test(playlist.id)) {
+    fail('未能确认创建结果，请先查看歌单。', 'invalidResponse');
+  }
+  return playlist;
+}
+
+module.exports = { getTrackMetadata, getSearchMetadata, appendPlaylistMedia, createPlaylist };
