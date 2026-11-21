@@ -37,7 +37,7 @@ function setup(api, spawn) {
   vm.runInContext(source.replace(/^export\s+/gm, '') + `
     musicApi = testApi;
     account = async () => readStored()?.account || null;
-    this.plugin = { playlists, playlist, addToPlaylist, liked, savedAlbums, home, browse, search, signOut };
+    this.plugin = { playlists, playlist, createPlaylist, addToPlaylist, liked, savedAlbums, home, browse, search, signOut };
     this.changeGeneration = () => { generation++; };
   `, context);
   return {
@@ -45,6 +45,40 @@ function setup(api, spawn) {
     changeAccount(id) { setSession(id); context.changeGeneration(); },
   };
 }
+
+test('owned playlist count includes uploaded sounds when count_visible is supplied', async () => {
+  const id = '7012345678901234567';
+  const { plugin } = setup(({ route }) => route.endsWith('/me/playlist')
+    ? { playlists: [{ ...list(id), count_tracks: 1, stats: { count_visible: 2 } }] } : emptyMixed);
+  assert.equal((await plugin.playlists())[0].trackCount, 2);
+});
+
+test('createPlaylist returns the new playlist and refreshes the owned list', async () => {
+  const id = '7012345678901234567';
+  const created = { ...list(id), title: '周末歌单', count_tracks: 0 };
+  let exists = false;
+  const writes = [];
+  const { plugin } = setup(({ route }) => route.endsWith('/me/playlist')
+    ? { playlists: exists ? [created] : [] } : emptyMixed,
+  () => ({
+    write(line) { writes.push(JSON.parse(line)); },
+    async readLine() { exists = true; return JSON.stringify({ ok: true, value: created }); },
+    closeStdin() {},
+  }));
+  assert.equal((await plugin.playlists()).length, 0);
+  await assert.rejects(plugin.createPlaylist({ name: '   ' }), /歌单名称/);
+  await assert.rejects(plugin.createPlaylist({ name: 'a'.repeat(31) }), /歌单名称/);
+  assert.equal(writes.length, 0);
+  const playlist = await plugin.createPlaylist({ name: ' 周末歌单 ' });
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].operation, 'createPlaylist');
+  assert.equal(writes[0].name, '周末歌单');
+  assert.equal(playlist.id, id);
+  assert.equal(playlist.name, created.title);
+  assert.equal(playlist.mine, true);
+  assert.equal(playlist.trackCount, 0);
+  assert.equal((await plugin.playlists())[0].id, id);
+});
 
 test('addToPlaylist checks the owner and type from the library and sends the whole deduplicated batch over IPC', async () => {
   assert.match(source, /^export async function addToPlaylist\(/m);
@@ -340,13 +374,42 @@ test('invalid offsets are rejected before any private library request', async ()
   assert.equal(calls.length, 0);
 });
 
+function setupSearch(respond) {
+  const requests = [];
+  const { plugin } = setup(() => assert.fail('search must use the signed helper'), (_command, args) => {
+    assert.deepEqual(plain(args), ['./media-helper.cjs']);
+    let message;
+    return {
+      write(line) {
+        message = JSON.parse(line);
+        assert.equal(message.operation, 'search');
+        requests.push(message);
+      },
+      async readLine() { return JSON.stringify({ ok: true, value: await respond(message) }); },
+      closeStdin() {},
+    };
+  });
+  return { plugin, requests };
+}
+
+test('all search tabs use the signed helper with their corresponding kinds', async () => {
+  const { plugin, requests } = setupSearch(() => ({ result_groups: [] }));
+  for (const kind of ['tracks', 'artists', 'albums', 'playlists']) {
+    const result = await plugin.search({ query: ' 周杰伦 ', kind });
+    assert.deepEqual(plain(result), { [kind]: [], more: false });
+  }
+  assert.deepEqual(requests.map(request => [request.kind, request.query, request.cursor]), [
+    ['track', '周杰伦', '0'], ['artist', '周杰伦', '0'], ['album', '周杰伦', '0'], ['playlist', '周杰伦', '0'],
+  ]);
+});
+
 test('concurrent equal searches share a pending page while different queries can run independently', async () => {
   const firstGate = deferred(), secondGate = deferred();
-  const { plugin, calls } = setup(({ params }) => params.q === 'first' ? firstGate.promise : secondGate.promise);
+  const { plugin, requests } = setupSearch(({ query }) => query === 'first' ? firstGate.promise : secondGate.promise);
   const one = plugin.search({ query: 'first' });
   const duplicate = plugin.search({ query: 'first' });
   const another = plugin.search({ query: 'second' });
-  const callCounts = { first: calls.filter(call => call.params.q === 'first').length, second: calls.filter(call => call.params.q === 'second').length };
+  const callCounts = { first: requests.filter(call => call.query === 'first').length, second: requests.filter(call => call.query === 'second').length };
   firstGate.resolve({ result_groups: [{ id: 'tracks', data: [track('first-result')], has_more: false }] });
   secondGate.resolve({ result_groups: [{ id: 'tracks', data: [track('second-result')], has_more: false }] });
   const values = await Promise.all([one, duplicate, another]);
@@ -356,7 +419,7 @@ test('concurrent equal searches share a pending page while different queries can
 
 test('search does not cache a page with an invalid cursor and can retry it', async () => {
   let attempts = 0;
-  const { plugin, calls } = setup(() => {
+  const { plugin, requests } = setupSearch(() => {
     attempts++;
     return attempts === 1
       ? { result_groups: [{ id: 'tracks', data: [track('must-not-commit')], has_more: true, next_cursor: '0' }] }
@@ -365,5 +428,5 @@ test('search does not cache a page with an invalid cursor and can retry it', asy
   await assert.rejects(plugin.search({ query: 'term' }), /游标/);
   const result = await plugin.search({ query: 'term' });
   assert.deepEqual(plain(result.tracks).map(item => item.id), ['valid-result']);
-  assert.equal(calls.length, 2);
+  assert.equal(requests.length, 2);
 });

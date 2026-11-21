@@ -5,7 +5,7 @@ const SESSION = 'qishui-session-v1';
 const DIAGNOSTIC = 'qishui-login-diagnostic-v1';
 const DEVICE = 'qishui-device-v1';
 const PLAYBACK_ERRORS = 'qishui-playback-errors-v1';
-const VERSION = '0.6.15';
+const VERSION = '0.6.17';
 const UA = {
   windows: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   darwin: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -231,7 +231,7 @@ export async function signIn() {
   signingIn = true;
   const epoch = ++generation;
   for (const [process, operation] of mediaProcesses) {
-    if (operation === 'addToPlaylist') { try { process.closeStdin(); } catch (_) {} }
+    if (operation === 'addToPlaylist' || operation === 'createPlaylist') { try { process.closeStdin(); } catch (_) {} }
   }
   let helper, timer;
   const closedHelpers = new Set();
@@ -343,7 +343,7 @@ function requestMedia(operation, params, deadline) {
     try {
       const timeoutError = () => deadline === undefined
         ? failure('获取音乐超时，请重试或选择较低音质。', 'unavailable')
-        : failure('添加到歌单超时，请先查看歌单确认结果。', 'unavailable');
+        : failure(operation === 'createPlaylist' ? '创建歌单超时，请先查看歌单确认结果。' : '添加到歌单超时，请先查看歌单确认结果。', 'unavailable');
       if (deadline !== undefined && Date.now() >= deadline) throw timeoutError();
       const cacheDir = mediaCacheDir();
       if (!cacheDir) throw failure('MyGo 未提供插件数据目录，无法缓存音频。', 'unavailable');
@@ -379,7 +379,8 @@ function requestMedia(operation, params, deadline) {
       if (!message || message.ok !== true) {
         if (message && message.code === 'signIn') { host.storage.remove(SESSION); clearMusicCache(); }
         const code = message && ['signIn', 'setup', 'unavailable', 'unsupported'].includes(message.code) ? message.code : 'unavailable';
-        const fallback = deadline === undefined ? '这首歌暂时无法播放。' : '未能确认添加结果，请先查看歌单。';
+        const fallback = operation === 'createPlaylist' ? '未能确认创建结果，请先查看歌单。'
+          : deadline === undefined ? '这首歌暂时无法播放。' : '未能确认添加结果，请先查看歌单。';
         const error = failure(message && typeof message.message === 'string' ? message.message.slice(0, 220) : fallback, code);
         error.playbackDiagnostic = message && message.diagnostic;
         throw error;
@@ -700,7 +701,8 @@ function mapPlaylist(record, mine) {
   if (description) playlist.description = description;
   const owner = qnText(raw.owner?.nickname) || qnText(raw.owner?.name) || qnText(raw.owner);
   if (owner) playlist.owner = owner;
-  const count = qnNumber(raw.count_tracks) ?? qnNumber(raw.trackCount) ?? qnNumber(raw.stats?.count_visible);
+  // count_tracks can exclude uploaded sounds that appear in the playlist.
+  const count = qnNumber(raw.stats?.count_visible) ?? qnNumber(raw.count_tracks) ?? qnNumber(raw.trackCount);
   if (count !== null) playlist.trackCount = count;
   if (raw.saved === true || raw.state?.is_collected === true) playlist.saved = true;
   if (Array.isArray(raw.tracks)) {
@@ -1009,6 +1011,21 @@ export async function playlists() {
   return musicPlaylistList(own, mixed, context.id);
 }
 
+export async function createPlaylist({ name } = {}) {
+  name = typeof name === 'string' ? name.trim() : '';
+  if (!name || name.length > 30 || /[\u0000-\u001f\u007f]/.test(name)) throw failure('请输入 1 到 30 字的歌单名称。');
+  const context = musicContext();
+  try {
+    const raw = await requestMedia('createPlaylist', { name }, musicDeadline());
+    musicCurrent(context);
+    const created = mapPlaylist(raw, true);
+    if (!created || !/^\d{1,32}$/.test(created.id)) throw failure('未能确认创建结果，请先查看歌单。');
+    return created;
+  } finally {
+    if (musicCache?.key === context.key) musicCache.own = null;
+  }
+}
+
 export async function addToPlaylist({ id, trackIds } = {}) {
   const deadline = musicDeadline();
   if (typeof id !== 'string' || !/^\d{1,32}$/.test(id)) throw failure('歌单标识无效。');
@@ -1285,13 +1302,8 @@ export async function search({ query, kind = 'tracks', offset = 0 } = {}) {
     if (state.items.length >= 1000 || state.cursors.size >= 60) throw failure('搜索结果过多，请缩小关键词范围。');
     const cursor = state.cursor;
     const load = (async () => {
-    const queryParams = {
-      q: term, cursor, search_id: state.searchId, search_method: 'input',
-      debug_params: '', from_search_id: '', search_scene: '',
-    };
-    const result = await musicBudget(kind === 'playlists'
-      ? requestMedia('search', { query: term, kind: definition.route, cursor, searchId: state.searchId })
-      : musicApi('/luna/search/' + definition.route, queryParams), deadline);
+    const result = await musicBudget(
+      requestMedia('search', { query: term, kind: definition.route, cursor, searchId: state.searchId }), deadline);
     musicCurrent(context);
     if (!Array.isArray(result.result_groups)) throw failure('汽水搜索返回的数据格式无效。');
     const group = result.result_groups.find(item => item.id === kind);

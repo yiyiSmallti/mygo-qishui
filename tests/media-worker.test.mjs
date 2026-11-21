@@ -241,22 +241,33 @@ test('signed metadata requests filter nested errors and the append worker signs 
   assert.ok(signedHeaders.includes('X-SS-STUB\r\n' + stub));
   assert.deepEqual(requestBody, { playlist_id: playlistId, media });
 
+  const create = () => worker.run({ operation: 'createPlaylist', name: '周末歌单', device, jar, deadline: now + 5000 });
+  responseData = { status_code: 0, playlist: { id: playlistId, title: '周末歌单' } };
+  assert.equal((await create()).id, playlistId);
+  assert.equal(requestUrl.pathname, '/luna/pc/me/playlist');
+  assert.equal(requestOptions.method, 'POST');
+  assert.equal(signedURL, requestUrl.href);
+  assert.deepEqual(requestBody, { name: '周末歌单', is_private: true });
+  responseData = { status_code: 0 };
+  await assert.rejects(create(), error => error.code === 'invalidResponse');
+  assert.equal(requests, 9, 'both create responses must reach the signed endpoint');
+
   for (const empty of [{}, { status_info: {} }, { media: [null], playlist: {} }, { status_code: 0, playlist: { id: '123' } }]) {
     responseData = empty;
     await assert.rejects(append(), error => error.code === 'invalidResponse');
   }
   responseData = { status_info: { code: 1000016 }, media };
   await assert.rejects(append(), error => error.code === 'signIn');
-  assert.equal(requests, 12);
+  assert.equal(requests, 14);
   responseData = undefined;
   await assert.rejects(append(), error => error.code === 'emptyResponse');
-  assert.equal(requests, 13);
+  assert.equal(requests, 15);
   await assert.rejects(append({ jar: {} }), error => error.code === 'signIn');
   await assert.rejects(append({ media: [...media, { id: '123', type: 'ugc_video' }] }), error => error.code === 'invalidTrack');
   await assert.rejects(append({ deadline: now }), error => error.code === 'timeout');
   finishSigning = () => { now += 5000; };
   await assert.rejects(append(), error => error.code === 'timeout');
-  assert.equal(requests, 13, 'invalid, unauthenticated, or late append calls cannot reach fetch');
+  assert.equal(requests, 15, 'invalid, unauthenticated, or late append calls cannot reach fetch');
 });
 
 test('a genuinely missing signing component still reports setup before any request', async () => {

@@ -159,7 +159,7 @@ async function requestMetadata({ route, params = {}, payload, label, device, jar
   let timeout = Math.max(1000, Math.min(20000, Number.isFinite(timeoutMs) ? timeoutMs : 12000));
   if (deadline !== undefined) {
     const remaining = deadline - Date.now();
-    if (remaining <= 0) fail('添加到歌单超时，请先查看歌单确认结果。', 'timeout');
+    if (remaining <= 0) fail('获取汽水' + label + '超时。', 'timeout');
     timeout = Math.min(timeout, remaining);
   }
   const timer = setTimeout(() => controller.abort(), timeout);
@@ -269,4 +269,28 @@ async function appendPlaylistMedia({ playlistId, media, device, jar, signal, dea
   return true;
 }
 
-module.exports = { getTrackMetadata, getSearchMetadata, appendPlaylistMedia };
+async function createPlaylist({ name, device, jar, signal, deadline }) {
+  if (typeof name !== 'string' || !name.trim() || name.length > 30 || /[\u0000-\u001f\u007f]/.test(name)) {
+    fail('请输入 1 到 30 字的歌单名称。', 'invalidPlaylist');
+  }
+  if (!Number.isSafeInteger(deadline) || Date.now() >= deadline) fail('创建歌单超时，请先查看歌单确认结果。', 'timeout');
+  let result;
+  try {
+    result = await requestMetadata({
+      route: '/luna/pc/me/playlist', payload: { name: name.trim(), is_private: true },
+      label: '创建歌单的结果', device, jar, signal, deadline,
+    });
+  } catch (error) {
+    if (['network', 'timeout', 'emptyResponse', 'invalidResponse'].includes(error.code)) {
+      fail('未能确认创建结果，请先查看歌单。', error.code, error.statusCode, error.networkCode);
+    }
+    throw error;
+  }
+  const playlist = result.playlist;
+  if (typeof playlist?.id !== 'string' || !/^\d{1,32}$/.test(playlist.id)) {
+    fail('未能确认创建结果，请先查看歌单。', 'invalidResponse');
+  }
+  return playlist;
+}
+
+module.exports = { getTrackMetadata, getSearchMetadata, appendPlaylistMedia, createPlaylist };

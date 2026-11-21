@@ -26,20 +26,23 @@ input.once('line', async line => {
   let message;
   try { message = JSON.parse(line); if (!message || typeof message !== 'object') throw new Error(); }
   catch { return finish({ ok: false, code: 'unavailable', message: '播放连接参数无效。' }); }
-  const deadline = message.operation === 'addToPlaylist' ? message.deadline : undefined;
-  const appendTimeout = { ok: false, code: 'unavailable', message: '添加到歌单超时，请先查看歌单确认结果。' };
+  const creating = message.operation === 'createPlaylist';
+  const playlistWrite = creating || message.operation === 'addToPlaylist';
+  const deadline = playlistWrite ? message.deadline : undefined;
+  const playlistTimeout = { ok: false, code: 'unavailable', message: creating
+    ? '创建歌单超时，请先查看歌单确认结果。' : '添加到歌单超时，请先查看歌单确认结果。' };
   try {
     clearTimeout(timeout);
-    if (message.operation === 'addToPlaylist') {
-      if (!Number.isSafeInteger(deadline) || deadline <= Date.now()) return finish(appendTimeout);
-      timeout = setTimeout(() => finish(appendTimeout), deadline - Date.now());
+    if (playlistWrite) {
+      if (!Number.isSafeInteger(deadline) || deadline <= Date.now()) return finish(playlistTimeout);
+      timeout = setTimeout(() => finish(playlistTimeout), deadline - Date.now());
     }
     preparing = true;
     await prepareSdk({ dataDir: typeof message.cacheDir === 'string' ? path.dirname(message.cacheDir) : '', signal: sdkController.signal,
       onProgress: text => { if (!finished) process.stdout.write(JSON.stringify({ type: 'progress', text }) + '\n'); } });
     preparing = false;
     if (finished) return;
-    if (deadline !== undefined && deadline <= Date.now()) return finish(appendTimeout);
+    if (deadline !== undefined && deadline <= Date.now()) return finish(playlistTimeout);
     process.stdout.write(JSON.stringify({ type: 'ready' }) + '\n');
     if (deadline === undefined) arm();
   } catch (error) {
